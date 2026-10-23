@@ -170,17 +170,17 @@ def sigmas(steps: int, mu: float) -> torch.Tensor:
 
 
 @torch.no_grad()
-def sample(dit, cond, uncond, width, height, steps=8, cfg=1.0, seed=0) -> torch.Tensor:
-    """cfg <= 1: the distilled Turbo schedule (fixed mu, no guidance). cfg > 1: the base model with
-    classifier-free guidance (uncond + cfg * (cond - uncond); Krea's guidance_scale = cfg - 1)."""
+def sample(dit, cond, uncond, width, height, steps=8, cfg=1.0, seed=0, distilled=True) -> torch.Tensor:
+    """distilled: the Turbo schedule (fixed mu). Otherwise the base model's resolution-dependent mu.
+    cfg > 1 adds classifier-free guidance (uncond + cfg * (cond - uncond); Krea's guidance_scale =
+    cfg - 1); Turbo is meant to run at cfg 1."""
     device = dit.device
     gh, gw = height // 16, width // 16
     gen = torch.Generator(device=device).manual_seed(seed)
     x = torch.randn((1, dit.cfg.in_channels, gh, gw), generator=gen, device=device, dtype=torch.float32)
-    distilled = cfg <= 1.0
     sig = sigmas(steps, TURBO_MU if distilled else calc_mu(gh * gw)).to(device)
     c = cond[None].to(device)
-    u = uncond[None].to(device) if (uncond is not None and not distilled) else None
+    u = uncond[None].to(device) if (uncond is not None and cfg > 1.0) else None
     for i in range(steps):
         t = sig[i].reshape(1)
         v = dit(x, t, c).float()
@@ -202,6 +202,7 @@ class Krea2Adapter(ModelAdapter):
     inference_label = "Turbo"
     sample_steps = 8
     sample_cfg = 1.0
+    distilled_steps = True
     quality_steps = 8
     # 12.6 GB int8 DiT on 16 GB: 6 of 28 blocks in RAM -> training peak 12.3 GB at 512, 13.2 GB at
     # 768, ~4.2 / 8.4 s per step on a 5060 Ti (ai-toolkit: layer_offloading 20 %, ~4 s at 512)
@@ -224,5 +225,5 @@ class Krea2Adapter(ModelAdapter):
     def timestep_shift(self, width, height):
         return math.exp(calc_mu((width // 16) * (height // 16)))
 
-    def sample(self, dit, cond, uncond, width, height, steps, cfg, seed):
-        return sample(dit, cond, uncond, width, height, steps=steps, cfg=cfg, seed=seed)
+    def sample(self, dit, cond, uncond, width, height, steps, cfg, seed, distilled=True):
+        return sample(dit, cond, uncond, width, height, steps=steps, cfg=cfg, seed=seed, distilled=distilled)

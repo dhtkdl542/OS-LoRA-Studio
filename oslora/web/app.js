@@ -284,7 +284,7 @@ async function saveModelPaths() {
   } catch (e) { toast(e.message, true); }
 }
 // model choice: swaps the model-file fields (each model keeps its own paths) and the LoRA name prefix
-const NAME_PREFIX = { moss_image: "OS_Moss_", krea2: "OS_Krea2_" };
+const NAME_PREFIX = { moss_image: "OS_Moss_", krea2: "OS_Krea2_", qwen21: "OS_Qwen_" };
 function selectModel(key, keepName = false) {
   const d = S.defaults;
   if (!d.model_files[key]) key = "moss_image";
@@ -295,6 +295,7 @@ function selectModel(key, keepName = false) {
   Object.entries(MODEL_INPUTS).forEach(([id, k]) => ($(`#${id}`).value = files[k] ? files[k].path : ""));
   renderModelStatus(files);
   $("#tr-idit-label").textContent = `샘플용 DiT (${d.inference_labels[key] || "추론용"})`;
+  $("#model-chip").textContent = d.model_list[key];
   const name = $("#tr-name");
   if (!keepName && prev && prev !== key && name.value.startsWith(NAME_PREFIX[prev] || "\u0000"))
     name.value = NAME_PREFIX[key] + name.value.slice(NAME_PREFIX[prev].length);
@@ -787,6 +788,13 @@ function renderCompare(d) {
       `<label><input type="checkbox" value="${esc(c.key)}" checked>${esc(c.label)}</label>`).join("");
     $("#cmp-prompts").value = (d.sample_prompts || []).join("\n---\n");
   }
+  // the run's model: what its inference model is called, and Turbo's fixed step count
+  const model = (d.config || {}).model || "moss_image", label = S.defaults.inference_labels[model] || "추론용";
+  $("#cmp-model").options[0].textContent = `${label} (실사용)`;
+  $$(".idit-name").forEach(e => (e.textContent = label));
+  const fixed = (S.defaults.fixed_steps || {})[model], onInf = $("#cmp-model").value === "sft";
+  $("#cmp-steps").disabled = !!(fixed && onInf);
+  if (fixed && onInf) $("#cmp-steps").value = fixed;
   const busy = S.busyTrain;
   $("#cmp-start").disabled = !!busy || S.cmpRunning;
   $("#cmp-msg").textContent = busy ? "학습 중에는 GPU가 비지 않아서 비교할 수 없어요. 끝난 뒤 눌러주세요." : "";

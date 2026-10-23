@@ -323,6 +323,7 @@ def defaults():
         "model_list": {k: v for k, v in MODEL_NAMES.items()},
         "model_files": {k: app_settings.model_status(k) for k in MODEL_NAMES},
         "inference_labels": {k: get_adapter(k).inference_label for k in MODEL_NAMES},
+        "fixed_steps": {k: get_adapter(k).sample_steps for k in MODEL_NAMES if get_adapter(k).distilled_steps},
         "caption_models": {k: v["label"] for k, v in CAPTION_MODELS.items()},
         "busy": {"train": running("train"), "caption": running("caption"), "train_run": STATE["train_run"]},
     }
@@ -1083,7 +1084,8 @@ def run_detail(run: str, since: int = 0):
         "name": run, "dir": rd, "status": st, "alive": alive, "pause_requested": os.path.exists(os.path.join(rd, "PAUSE")), "resume_points": _resume_points(rd), "checkpoints": _checkpoints(rd, run), "steps": steps, "evals": evals, "quality": quality,
         "samples": samples, "sample_prompts": (cfg.get("sample") or {}).get("prompts", []),
         "leak_base": leak_base, "files": files, "log": "".join(log),
-        "config": {"resolution": (cfg.get("dataset") or {}).get("resolution"),
+        "config": {"model": cfg.get("model") or "moss_image",
+                   "resolution": (cfg.get("dataset") or {}).get("resolution"),
                    "rank": (cfg.get("network") or {}).get("rank"),
                    "trigger": (cfg.get("dataset") or {}).get("trigger"),
                    "folder": (cfg.get("dataset") or {}).get("folder")},

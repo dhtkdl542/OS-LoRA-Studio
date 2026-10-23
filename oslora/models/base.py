@@ -17,6 +17,8 @@ class ModelAdapter:
     key: str = ""             # config.model / cache folder name
     label: str = ""           # shown in the UI
     base_model_tag: str = ""  # ss_base_model in the saved LoRA's metadata
+    lora_prefix: str = "diffusion_model."  # key prefix of the saved LoRA (what ComfyUI maps)
+    bucket_step: int = 16  # training image sizes are multiples of this (pixels)
     # LoRA targets by preset name (regexes over module names of the DiT)
     lora_targets: Dict[str, List[str]] = {}
     # what the inference model is called in the UI ("SFT", "Turbo", ...)
@@ -24,6 +26,8 @@ class ModelAdapter:
     # viewing samples / comparison on the inference model
     sample_steps: int = 30
     sample_cfg: float = 3.0
+    # the inference model is step-distilled (Turbo): always render it with ``sample_steps``
+    distilled_steps: bool = False
     # quality rounds (small renders)
     quality_steps: int = 16
     # renders on the training (base) model itself (leak probe references)
@@ -60,8 +64,9 @@ class ModelAdapter:
         return auto_timestep_shift(width, height)
 
     def sample(self, dit: nn.Module, cond: torch.Tensor, uncond: Optional[torch.Tensor], width: int, height: int,
-               steps: int, cfg: float, seed: int) -> torch.Tensor:
-        """Latents for one image."""
+               steps: int, cfg: float, seed: int, distilled: bool = True) -> torch.Tensor:
+        """Latents for one image. ``distilled``: the live weights are the inference model (Turbo
+        schedule where the family has one), not the training base."""
         raise NotImplementedError
 
     # -- helpers ------------------------------------------------------------------------

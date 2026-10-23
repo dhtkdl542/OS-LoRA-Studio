@@ -12,7 +12,7 @@
 <body>
 <header class="topbar">
   <div class="brand"><span class="brand-mark" aria-hidden="true"></span>OS LoRA Studio</div>
-  <span class="model-chip">MOSS-Image Base</span>
+  <span class="model-chip" id="model-chip">MOSS-Image</span>
   <div class="sys" id="sys" aria-label="시스템 사용량">
     <div class="meter" id="m-cpu"><span class="ml">CPU</span><span class="mb"><i></i></span><span class="mv">-</span></div>
     <div class="meter" id="m-ram"><span class="ml">RAM</span><span class="mb"><i></i></span><span class="mv">-</span></div>
@@ -242,7 +242,7 @@
         </div>
         <div class="re-howto">
           <b>ComfyUI에서 쓰기</b>
-          <p><code>models/loras</code>에 복사한 뒤 MOSS-Image 모델(Base 또는 SFT)에 LoRA 로더로 연결하세요. ★ 표시 파일이 추천 파일입니다.</p>
+          <p><code>models/loras</code>에 복사한 뒤 학습한 모델(학습용 또는 <span class="idit-name">추론용</span>)에 LoRA 로더로 연결하세요. ★ 표시 파일이 추천 파일입니다.</p>
         </div>
         <button class="btn" id="re-open">폴더 열기</button>
       </div>
@@ -261,7 +261,7 @@
                 <label class="field"><span>시드</span><input type="number" id="cmp-seed" value="42"></label>
                 <label class="field"><span>LoRA 강도</span><input type="number" id="cmp-strength" value="1.0" step="0.1" min="0" max="2"></label>
                 <label class="field"><span>Step</span><input type="number" id="cmp-steps" value="24" min="8" max="60"></label>
-                <label class="field"><span>모델</span><select id="cmp-model"><option value="sft">SFT (실사용)</option><option value="base">Base (학습용)</option></select></label>
+                <label class="field"><span>모델</span><select id="cmp-model"><option value="sft">SFT (실사용)</option><option value="base">학습용 모델</option></select></label>
               </div>
               <div class="cmp-go"><span class="hint" id="cmp-msg"></span><button class="btn primary" id="cmp-start">비교 이미지 만들기</button></div>
             </div>

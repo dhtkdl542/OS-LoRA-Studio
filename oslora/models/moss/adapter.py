@@ -304,5 +304,5 @@ class MossAdapter(ModelAdapter):
     def predict(self, dit, x_t, t, text, mask):
         return dit(x_t, t * NUM_TRAIN_TIMESTEPS, text, mask)
 
-    def sample(self, dit, cond, uncond, width, height, steps, cfg, seed):
+    def sample(self, dit, cond, uncond, width, height, steps, cfg, seed, distilled=True):
         return sample(dit, cond, uncond, width, height, steps=steps, cfg=cfg, seed=seed)

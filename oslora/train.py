@@ -129,7 +129,7 @@ class Trainer:
         for path, cap in pairs:
             with Image.open(path) as im:
                 w, h = im.size
-            bucket = bucket_for(w, h, c.resolution)
+            bucket = bucket_for(w, h, c.resolution, step=self.model.bucket_step)
             if max(w / bucket[0], h / bucket[1]) < 0.75:
                 self.rl.log(f"⚠ 저해상도 이미지(업스케일됨): {os.path.basename(path)} {w}x{h}")
             variants = load_caption_variants(path)
@@ -156,7 +156,7 @@ class Trainer:
         for r in sorted({int(r) for r in (c.multires or []) if int(r) != c.resolution}):
             for it in self.train_items:
                 with Image.open(it.image) as im:
-                    b = bucket_for(*im.size, r)
+                    b = bucket_for(*im.size, r, step=self.model.bucket_step)
                 self.extra_items.append(Item(image=it.image, caption=it.caption, bucket=b,
                                              key=file_key(it.image, f"{b[0]}x{b[1]}"), alt=list(it.alt)))
         if self.extra_items:
@@ -318,7 +318,7 @@ class Trainer:
         n = cfg.network
         targets = self.model.lora_targets
         self.net = LoRANetwork(self.dit, targets.get(n.targets, targets["all"]), rank=n.rank, alpha=n.alpha,
-                               dropout=n.dropout, rank_dropout=n.rank_dropout)
+                               dropout=n.dropout, rank_dropout=n.rank_dropout, key_prefix=self.model.lora_prefix)
         params = self.net.parameters()
         for p in params:
             p.requires_grad_(True)
@@ -379,7 +379,8 @@ class Trainer:
             lat = self.cache.get_latent(key)
             if lat is None:
                 lat = self.model.sample(self.dit, self.text[prompt], self.text[""], LEAK_RES, LEAK_RES,
-                                        steps=self.model.base_sample_steps, cfg=self.model.base_sample_cfg, seed=i)[0]
+                                        steps=self.model.base_sample_steps, cfg=self.model.base_sample_cfg, seed=i,
+                                        distilled=False)[0]
                 self.cache.put_latent(key, lat)
             base_imgs.append(lat)
             for t in LEAK_T:
@@ -731,8 +732,9 @@ class Trainer:
             self.swap.swap()
         try:
             with self.using_ema():
-                lats = [self.model.sample(self.dit, self.text[p], self.text[""], width, height,
-                                          steps=steps, cfg=cfg_scale, seed=seeds[i]) for i, p in enumerate(prompts)]
+                lats = [self.model.sample(self.dit, self.text[p], self.text[""], width, height, steps=steps,
+                                          cfg=cfg_scale, seed=seeds[i], distilled=bool(self.swap))
+                        for i, p in enumerate(prompts)]
         finally:
             if self.swap:
                 self.swap.swap()

@@ -107,7 +107,8 @@ def main():
         quant.INT8_COMPUTE = bool(getattr(cfg.train, "int8_compute", False))
         dit = model.load_dit(dit_path, log=lambda m: save(message=m))
         n = cfg.network
-        net = LoRANetwork(dit, model.lora_targets.get(n.targets, model.lora_targets["all"]), rank=n.rank, alpha=n.alpha)
+        net = LoRANetwork(dit, model.lora_targets.get(n.targets, model.lora_targets["all"]), rank=n.rank, alpha=n.alpha,
+                          key_prefix=model.lora_prefix)
         net.train(False)
         model.block_offload(dit, log=lambda m: save(message=m))
         vae = model.vae(cfg.paths.vae)
@@ -131,6 +132,8 @@ def main():
         total = len(prompts) * len(columns)
         done, t0 = 0, time.time()
         w, h, steps = int(req.get("width", 768)), int(req.get("height", 1024)), int(req.get("steps", 24))
+        if model.distilled_steps and not use_base:
+            steps = model.sample_steps  # Turbo is distilled for its step count
         strength = float(req.get("strength", 1.0))
         for ci, col in enumerate(columns):
             if col["file"]:
@@ -144,8 +147,9 @@ def main():
                 eta = (time.time() - t0) / done * (total - done) if done else None
                 save(status="running", message=f"{col['label']} · 프롬프트 {pi + 1}/{len(prompts)} 그리는 중",
                      done=done, total=total, eta=eta)
-                lat = model.sample(dit, emb[prompt], emb[""], w, h, steps=steps, cfg=cfg.sample.cfg,
-                                  seed=result["seed"] + pi)
+                lat = model.sample(dit, emb[prompt], emb[""], w, h, steps=steps,
+                                   cfg=model.base_sample_cfg if use_base else cfg.sample.cfg,
+                                   seed=result["seed"] + pi, distilled=not use_base)
                 img = vae.decode(lat)[0]
                 fname = f"c{ci:02d}_p{pi:02d}.jpg"
                 img.save(os.path.join(out_dir, fname), quality=92)
