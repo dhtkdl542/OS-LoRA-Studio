@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OS LoRA Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="brand-mark" aria-hidden="true"></span>OS LoRA Studio</div>
+  <span class="model-chip">MOSS-Image Base</span>
+  <div class="sys" id="sys" aria-label="시스템 사용량">
+    <div class="meter" id="m-cpu"><span class="ml">CPU</span><span class="mb"><i></i></span><span class="mv">-</span></div>
+    <div class="meter" id="m-ram"><span class="ml">RAM</span><span class="mb"><i></i></span><span class="mv">-</span></div>
+    <div class="meter" id="m-vram"><span class="ml">VRAM</span><span class="mb"><i></i></span><span class="mv">-</span></div>
+    <div class="meter" id="m-gpu"><span class="ml">GPU</span><span class="mb"><i></i></span><span class="mv">-</span></div>
+  </div>
+  <div class="job" id="job" hidden>
+    <span class="job-dot"></span><span id="job-text"></span>
+    <span class="job-bar"><span id="job-fill"></span></span>
+  </div>
+</header>
+
+<nav class="rail" aria-label="메뉴">
+  <ol class="nav">
+    <li><button class="nav-item active" data-view="dataset"><span class="nav-num">1</span>데이터셋</button></li>
+    <li><button class="nav-item" data-view="train"><span class="nav-num">2</span>학습 설정</button></li>
+    <li><button class="nav-item" data-view="monitor"><span class="nav-num">3</span>모니터</button></li>
+    <li><button class="nav-item" data-view="results"><span class="nav-num">4</span>결과</button></li>
+  </ol>
+  <div class="runs">
+    <h2>학습 기록</h2>
+    <ul id="run-list"></ul>
+  </div>
+</nav>
+
+<main>
+  <!-- 1. dataset -->
+  <section class="view active" id="view-dataset">
+    <div class="ds-head">
+      <label class="field grow">
+        <span>데이터셋 폴더</span>
+        <input id="ds-folder" placeholder="오른쪽 [폴더 선택]을 누르거나, 경로를 붙여넣고 Enter">
+      </label>
+      <button class="btn primary" id="ds-load">폴더 선택</button>
+      <div class="ds-stats" id="ds-stats"></div>
+    </div>
+
+    <div class="ds-body">
+      <div class="ds-gridwrap">
+        <div class="ds-grid" id="ds-grid">
+          <div class="empty">폴더를 불러오면 이미지가 여기에 나옵니다.</div>
+        </div>
+        <div class="pager" id="ds-pager" hidden>
+          <button class="btn ghost icon" id="pg-prev" aria-label="이전 페이지">‹</button>
+          <span id="pg-label"></span>
+          <button class="btn ghost icon" id="pg-next" aria-label="다음 페이지">›</button>
+        </div>
+      </div>
+      <aside class="ds-editor" id="ds-editor">
+        <!-- dataset check-up: shown while no image is selected -->
+        <div class="ds-diag" id="ds-diag">
+          <div class="diag-head"><h3>데이터셋 진단</h3><button class="btn ghost" id="diag-rerun">다시 진단</button></div>
+          <div class="diag-body" id="diag-body"><div class="empty small">폴더를 불러오면 자동으로 진단해요.</div></div>
+        </div>
+        <!-- caption editor: shown when an image is selected -->
+        <div class="ds-edit" id="ds-edit" hidden>
+          <button class="btn ghost back" id="ed-back">← 진단 결과</button>
+          <div class="ed-img"><img id="ed-img" alt=""><div class="empty small" id="ed-empty">이미지를 클릭하면 캡션을 고칠 수 있어요.</div></div>
+          <div class="ed-meta" id="ed-meta"></div>
+          <textarea id="ed-cap" placeholder="캡션" disabled></textarea>
+          <div class="ed-actions">
+            <span class="hint" id="ed-msg"></span>
+            <button class="btn" id="ed-save" disabled>캡션 저장</button>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <div class="capbar">
+      <div class="capbar-title">자동 캡션</div>
+      <label class="field"><span>모델</span><select id="cap-model"></select></label>
+      <div class="field"><span>길이</span>
+        <div class="seg" id="cap-style">
+          <button data-v="moss" title="MOSS 공식 캡션 방식: 긴·중간·짧은 캡션을 한 번에 만들고, 학습 때 섞어 써요. 화질(선명함·보정 느낌)도 적어요">MOSS 3종</button><button data-v="short">짧게</button><button data-v="medium" class="on">중간</button><button data-v="detailed">상세</button><button data-v="tags">태그</button>
+        </div>
+      </div>
+      <div class="field"><span>대상</span>
+        <div class="seg" id="cap-subject">
+          <button data-v="character" class="on" title="얼굴·피부·인종 같은 고유 특징은 묘사하지 않아 정체성이 LoRA에 묶입니다">캐릭터</button><button data-v="general">일반</button><button data-v="style" title="화풍 단어를 빼고 내용만 묘사">화풍</button>
+        </div>
+      </div>
+      <label class="field"><span>트리거 워드</span><input id="cap-trigger" placeholder="선택"></label>
+      <label class="check"><input type="checkbox" id="cap-over"> 기존 캡션 덮어쓰기</label>
+      <button class="btn primary" id="cap-start">캡션 만들기</button>
+      <div class="cap-status" id="cap-status"></div>
+    </div>
+  </section>
+
+  <!-- 2. train -->
+  <section class="view" id="view-train">
+    <div class="tr-cols">
+      <div class="panel">
+        <h3>기본</h3>
+        <div class="field"><span>모델</span><div class="seg" id="tr-model"></div></div>
+        <label class="field"><span>LoRA 이름</span><input id="tr-name" value="OS_Moss_"></label>
+        <label class="field"><span>트리거 워드 <em>캡션에 없으면 앞에 붙여요</em></span><input id="tr-trigger" placeholder="없어도 됩니다"></label>
+        <button class="btn auto-btn" id="tr-auto" title="데이터셋 진단 결과를 보고 해상도·rank·LR·step·홀드아웃·샘플 크기를 정해요">✨ 데이터셋에 맞춰 자동 설정</button>
+        <div class="field"><span>프리셋 <em>직접 고르고 싶을 때</em></span><div class="presets" id="tr-presets"></div></div>
+        <div class="field"><span>학습 해상도</span>
+          <div class="seg" id="tr-res"><button data-v="512">512</button><button data-v="768">768</button><button data-v="1024" class="on">1024</button><button data-v="1280">1280</button></div>
+        </div>
+        <div class="row3">
+          <label class="field"><span>최대 step <em>auto = 자동</em></span><input id="tr-steps" value="auto" placeholder="예: 3000"></label>
+          <label class="field"><span>Rank</span><input type="number" id="tr-rank" value="32" min="4" max="128" step="4"></label>
+          <label class="field"><span>Alpha</span><input type="number" id="tr-alpha" value="32" min="1" max="128"></label>
+        </div>
+        <div class="models">
+          <h4>모델 파일 <small>📁 내 파일 지정 · ⬇ 없으면 받기</small></h4>
+          <div class="field"><span>DiT</span><div class="pick-row"><input id="tr-dit"><button class="btn icon pick-file" data-for="tr-dit" data-title="DiT 모델 파일 선택" title="찾아보기">📁</button><a class="btn icon dl" data-model="dit" target="_blank" rel="noopener" title="Hugging Face에서 받기">⬇</a></div></div>
+          <div class="field" title="샘플·품질 확인·체크포인트 비교를 그릴 모델 (실제로 쓰는 SFT). 학습은 위 DiT(Base)로 해요. 비우면 학습 모델로 그려요."><span id="tr-idit-label">샘플용 DiT</span><div class="pick-row"><input id="tr-idit"><button class="btn icon pick-file" data-for="tr-idit" data-title="샘플용 DiT 파일 선택 (SFT)" title="찾아보기">📁</button><a class="btn icon dl" data-model="inference_dit" target="_blank" rel="noopener" title="Hugging Face에서 받기">⬇</a></div></div>
+          <div class="field"><span>텍스트 인코더</span><div class="pick-row"><input id="tr-te"><button class="btn icon pick-file" data-for="tr-te" data-title="텍스트 인코더 파일 선택" title="찾아보기">📁</button><a class="btn icon dl" data-model="text_encoder" target="_blank" rel="noopener" title="Hugging Face에서 받기">⬇</a></div></div>
+          <div class="field"><span>VAE</span><div class="pick-row"><input id="tr-vae"><button class="btn icon pick-file" data-for="tr-vae" data-title="VAE 파일 선택" title="찾아보기">📁</button><a class="btn icon dl" data-model="vae" target="_blank" rel="noopener" title="Hugging Face에서 받기">⬇</a></div></div>
+        </div>
+      </div>
+
+      <div class="panel autopilot">
+        <div class="ap-head">
+          <h3>Autopilot</h3>
+          <label class="switch"><input type="checkbox" id="tr-ap" checked><span></span></label>
+        </div>
+        <p class="ap-desc">학습하는 동안 세 가지를 주기적으로 재서 LR을 스스로 조절하고, 과적합이 보이면 마무리하고 멈춰요. 점수가 가장 좋았던 시점이 최종 파일이 됩니다.</p>
+        <ul class="probes">
+          <li><i class="dot fit"></i><div><b>학습 이미지 loss</b><span>얼마나 배웠는지. 내려가야 해요.</span></div></li>
+          <li><i class="dot val"></i><div><b>홀드아웃 loss</b><span>학습에서 뺀 사진으로 일반화 확인. 다시 오르면 과적합이에요.</span></div></li>
+          <li><i class="dot leak"></i><div><b>누출</b><span>자동차·풍경 같은 무관한 그림이 얼마나 바뀌는지. 작을수록 좋아요.</span></div></li>
+        </ul>
+        <div class="row3">
+          <label class="field"><span>최소 LR</span><input id="tr-minlr" value="3e-5"></label>
+          <label class="field"><span>시작 LR</span><input id="tr-startlr" value="1e-4"></label>
+          <label class="field"><span>최대 LR</span><input id="tr-maxlr" value="1e-4"></label>
+        </div>
+        <div class="row2">
+          <label class="field"><span>검증용 홀드아웃</span>
+            <select id="tr-holdout"><option value="auto">자동 (16장 이상일 때)</option><option value="off">끄기</option><option value="2">2장</option><option value="4">4장</option><option value="6">6장</option></select>
+          </label>
+          <label class="check"><input type="checkbox" id="tr-early" checked> 과적합 신호 3번이면 조기 종료</label>
+        </div>
+        <div class="field fixed-lr" id="tr-fixed" hidden><span>고정 LR <em>Autopilot을 끄면 cosine 스케줄</em></span><input id="tr-lr" value="1e-4"></div>
+        <div class="extra">
+          <h4>세부 설정</h4>
+          <div class="row3">
+            <label class="field"><span>EMA</span><input id="tr-ema" value="0.99"></label>
+            <label class="field"><span>캡션 드롭아웃</span><input id="tr-cdrop" value="0.05"></label>
+            <label class="field"><span>옵티마이저</span><select id="tr-opt"><option>adamw</option><option>adamw8bit</option></select></label>
+          </div>
+          <label class="check" title="학습 step의 절반은 이미지에 실제 사진 같은 마감(자연스러운 사진 톤 + 폰카 센서 노이즈)을 입혀서 봐요. 데이터가 너무 깨끗하면 LoRA가 '이 사람은 늘 깨끗하다'까지 배우는 걸 막아요. 데이터 파일은 그대로예요."><input type="checkbox" id="tr-photo" checked> 사진 질감 입히기 <em>(자연스러운 사진 톤 + 폰카 노이즈, 학습의 절반)</em></label>
+          <label class="check" title="학습 이미지를 512·768에서도 같이 배워요 (학습 해상도와 고르게 섞음). 평균 step 시간이 절반 가까이로 줄고, 크기가 달라도 얼굴이 덜 무너져요. 검증과 품질 확인은 학습 해상도 그대로예요."><input type="checkbox" id="tr-multires"> 해상도 섞기 <em>(512·768 추가, 약 1.7배 빠름)</em></label>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>샘플</h3>
+        <label class="field grow"><span>샘플 프롬프트 <em>여러 개는 --- 만 있는 줄로 구분, 줄바꿈은 그대로 유지</em></span><textarea id="tr-samples" rows="4"></textarea></label>
+        <div class="row3">
+          <label class="field"><span>간격 (step)</span><input type="number" id="tr-severy" value="500" min="25" step="25"></label>
+          <label class="field"><span>너비</span><input type="number" id="tr-sw" value="640" step="16"></label>
+          <label class="field"><span>높이</span><input type="number" id="tr-sh" value="864" step="16"></label>
+        </div>
+        <p class="hint">샘플은 같은 시드로 그려서 모니터의 "샘플 변화"에서 step별로 나란히 비교할 수 있어요. 학습 이미지와 다른 옷·배경·구도를 넣어야 과적합이 잘 보여요.</p>
+      </div>
+    </div>
+    <div class="tr-foot">
+      <div class="tr-summary" id="tr-summary"></div>
+      <span class="hint err" id="tr-msg"></span>
+      <button class="btn ghost" id="tr-queue" hidden>대기열</button>
+      <button class="btn primary big" id="tr-start">학습 시작</button>
+    </div>
+  </section>
+
+  <!-- 3. monitor -->
+  <section class="view" id="view-monitor">
+    <div class="mo-hero">
+      <div class="mo-title">
+        <div class="mo-name" id="mo-name">학습을 선택하세요</div>
+        <div class="mo-phase" id="mo-phase"></div>
+      </div>
+      <div class="mo-counter"><span id="mo-step">0</span><span class="mo-of" id="mo-max">/ -</span></div>
+      <div class="mo-stats">
+        <div><span>LR</span><b id="mo-lr">-</b></div>
+        <div><span>loss</span><b id="mo-loss">-</b></div>
+        <div><span>남은 시간</span><b id="mo-eta">-</b></div>
+        <div><span>최고 점수</span><b id="mo-best">-</b></div>
+        <div><span>과적합 신호</span><b id="mo-strikes">-</b></div>
+      </div>
+      <div class="mo-actions">
+        <button class="btn" id="mo-pause" hidden title="현재 step을 마치고 GPU를 비운 채 기다려요. 게임 등 다른 작업을 해도 돼요">⏸ 일시정지</button>
+        <button class="btn primary" id="mo-resume" hidden>▶ 다시 시작</button>
+        <button class="btn danger" id="mo-stop" hidden>중지</button>
+      </div>
+      <div class="mo-progress"><span id="mo-fill"></span></div>
+    </div>
+
+    <div class="mo-mid">
+      <div class="charts">
+        <figure><figcaption>Loss</figcaption><canvas id="ch-loss"></canvas></figure>
+        <figure><figcaption>Learning rate</figcaption><canvas id="ch-lr"></canvas></figure>
+        <figure><figcaption>프로브 loss <em>시작 = 1, 낮을수록 학습</em></figcaption><canvas id="ch-probe"></canvas></figure>
+        <figure><figcaption>누출 <em>무관한 프롬프트에서 베이스와 차이</em></figcaption><canvas id="ch-leak"></canvas></figure>
+      </div>
+      <div class="journal">
+        <h3>Autopilot 기록</h3>
+        <ol id="journal"></ol>
+      </div>
+    </div>
+
+    <div class="sheet">
+      <div class="sheet-head"><h3>샘플 변화</h3><span class="hint" id="sheet-hint"></span><div class="qsum" id="qsum"></div></div>
+      <div class="sheet-body" id="sheet"></div>
+    </div>
+  </section>
+
+  <!-- 4. results -->
+  <section class="view" id="view-results">
+    <div class="re-cols">
+      <div class="panel re-files">
+        <h3 id="re-title">결과</h3>
+        <p class="hint" id="re-reason"></p>
+        <ul class="files" id="re-files"></ul>
+        <div class="re-continue" id="re-continue" hidden>
+          <b>이어서 학습</b>
+          <div class="row2">
+            <label class="field"><span>어디부터</span><select id="re-step"></select></label>
+            <label class="field"><span>최대 step (늘릴 수 있어요)</span><input type="number" id="re-max" step="100"></label>
+          </div>
+          <button class="btn primary" id="re-go">이어서 학습</button>
+          <p class="hint" id="re-cont-hint"></p>
+        </div>
+        <div class="re-howto">
+          <b>ComfyUI에서 쓰기</b>
+          <p><code>models/loras</code>에 복사한 뒤 MOSS-Image 모델(Base 또는 SFT)에 LoRA 로더로 연결하세요. ★ 표시 파일이 추천 파일입니다.</p>
+        </div>
+        <button class="btn" id="re-open">폴더 열기</button>
+      </div>
+      <div class="panel re-compare">
+        <div class="re-compare-head">
+          <div class="seg" id="re-mode"><button data-v="samples" class="on">최종 샘플</button><button data-v="compare">체크포인트 비교</button></div>
+          <span class="hint" id="re-cap"></span>
+        </div>
+        <div class="re-grid" id="re-grid"></div>
+        <div class="cmp" id="re-cmp" hidden>
+          <div class="cmp-form">
+            <label class="field cmp-prompts"><span>프롬프트 <em>여러 개는 --- 줄로 구분</em></span><textarea id="cmp-prompts" rows="3"></textarea></label>
+            <div class="cmp-side">
+              <div class="field"><span>비교할 체크포인트</span><div class="cmp-cks" id="cmp-cks"></div></div>
+              <div class="row3">
+                <label class="field"><span>시드</span><input type="number" id="cmp-seed" value="42"></label>
+                <label class="field"><span>LoRA 강도</span><input type="number" id="cmp-strength" value="1.0" step="0.1" min="0" max="2"></label>
+                <label class="field"><span>Step</span><input type="number" id="cmp-steps" value="24" min="8" max="60"></label>
+                <label class="field"><span>모델</span><select id="cmp-model"><option value="sft">SFT (실사용)</option><option value="base">Base (학습용)</option></select></label>
+              </div>
+              <div class="cmp-go"><span class="hint" id="cmp-msg"></span><button class="btn primary" id="cmp-start">비교 이미지 만들기</button></div>
+            </div>
+          </div>
+          <div class="cmp-table" id="cmp-table"><div class="empty small">체크포인트를 고르고 [비교 이미지 만들기]를 누르면, 같은 시드로 그려서 나란히 보여주고 닮음·프롬프트 준수 점수를 매겨요.</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="modal" id="auto-modal" hidden>
+  <div class="modal-card" role="dialog" aria-labelledby="auto-title">
+    <div class="modal-head">
+      <h3 id="auto-title">자동 설정</h3>
+      <div class="seg" id="auto-kind"><button data-v="character" class="on">캐릭터</button><button data-v="style">화풍</button><button data-v="object">사물·컨셉</button></div>
+    </div>
+    <ul class="reasons" id="auto-reasons"><li class="hint">데이터셋을 살펴보는 중…</li></ul>
+    <div class="modal-foot">
+      <span class="hint">적용한 뒤에도 값을 자유롭게 고칠 수 있어요. 샘플 프롬프트는 그대로 둬요.</span>
+      <button class="btn" id="auto-cancel">닫기</button>
+      <button class="btn primary" id="auto-apply" disabled>이대로 적용</button>
+    </div>
+  </div>
+</div>
+<div class="modal" id="queue-modal" hidden>
+  <div class="modal-card" role="dialog" aria-labelledby="queue-title">
+    <div class="modal-head"><h3 id="queue-title">학습 대기열</h3><span class="hint" id="queue-state"></span></div>
+    <ul class="reasons queue-list" id="queue-list"></ul>
+    <div class="modal-foot">
+      <span class="hint">지금 학습이 끝나면 위에서부터 차례로 자동으로 시작해요. 오류나 중지로 끝나면 대기열을 멈춰요.</span>
+      <button class="btn" id="queue-resume" hidden>대기열 다시 시작</button>
+      <button class="btn" id="queue-close">닫기</button>
+    </div>
+  </div>
+</div>
+<div class="lightbox" id="lightbox" hidden><img id="lb-img" alt=""><div class="lb-cap" id="lb-cap"></div></div>
+<div class="toast" id="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
