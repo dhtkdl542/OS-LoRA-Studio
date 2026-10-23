@@ -1,0 +1,9 @@
+/venv/
+/cache/
+/output/
+/models/
+tests/out/
+__pycache__/
+*.safetensors
+settings.json
+settings.json.tmp
