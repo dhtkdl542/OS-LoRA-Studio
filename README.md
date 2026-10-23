@@ -1,6 +1,6 @@
 # OS LoRA Studio
 
-직접 만든 LoRA 트레이너. 현재 지원 모델: **MOSS-Image** (Base 학습 / SFT 샘플), **Krea 2** (Raw 학습 / Turbo 샘플). 다음 순서로 Qwen Image 2.1, MiniMax H3 추가 예정.
+직접 만든 LoRA 트레이너. 현재 지원 모델: **MOSS-Image** (Base 학습 / SFT 샘플), **Krea 2** (Raw 학습 / Turbo 샘플), **Qwen Image 2.1** (기본 모델 학습 / Turbo 샘플). 다음은 MiniMax H3 추가 예정.
 
 ## 요구 사양
 
@@ -8,7 +8,7 @@
 - **NVIDIA GPU + 드라이버 570 이상** (CUDA 12.8 빌드). VRAM **16GB** 기준으로 맞춰져 있어요 (1024px 학습 피크 약 12GB)
 - **Python 3.12** — [python.org](https://www.python.org/downloads/release/python-3120/)의 Windows installer로 설치 (py launcher, tcl/tk 포함)
 - RAM 32GB 권장 (학습 중 샘플용 DiT를 RAM에 대기시켜요. Krea 2는 여기에 블록 스왑분 2.4GB가 더해져요)
-- 디스크: 모델 파일 MOSS 약 21GB / Krea 2 약 32GB + 캡션 모델·평가 모델 수 GB
+- 디스크: 모델 파일 MOSS 약 21GB / Krea 2 약 32GB / Qwen 2.1 약 25GB + 캡션 모델·평가 모델 수 GB
 
 ## 설치와 실행
 
@@ -39,6 +39,17 @@
 | VAE (Wan 2.1) | [qwen_image_vae.safetensors](https://huggingface.co/Comfy-Org/Krea-2/blob/main/vae/qwen_image_vae.safetensors) | 0.25 GB |
 
 - Turbo 파생 모델(같은 구조의 int8 ConvRot)도 샘플용으로 쓸 수 있어요.
+
+**Qwen Image 2.1**
+
+| 칸 | 파일 (Comfy-Org/Qwen-Image-2.1) | 크기 |
+|---|---|---|
+| DiT (학습용 기본 모델) | [qwen_image_2.1_int8_convrot.safetensors](https://huggingface.co/Comfy-Org/Qwen-Image-2.1/blob/main/diffusion_models/qwen_image_2.1_int8_convrot.safetensors) | 7.3 GB |
+| 샘플용 DiT (Turbo) | [qwen_image_2.1_turbo_int8_convrot.safetensors](https://huggingface.co/Comfy-Org/Qwen-Image-2.1/blob/main/diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors) | 7.3 GB |
+| 텍스트 인코더 (Qwen3-VL 8B) | [qwen3vl_8b_int8_convrot.safetensors](https://huggingface.co/Comfy-Org/Qwen-Image-2.1/blob/main/text_encoders/qwen3vl_8b_int8_convrot.safetensors) | 9.4 GB |
+| VAE | [qwen_image_2.1_vae_bf16.safetensors](https://huggingface.co/Comfy-Org/Qwen-Image-2.1/blob/main/vae/qwen_image_2.1_vae_bf16.safetensors) | 0.7 GB |
+
+- LoRA는 `transformer.transformer_blocks.N.img_mlp.gate_layer` 같은 키로 저장돼요. ComfyUI가 합쳐진 `gate_up` 가중치의 절반씩에 연결하는 형식이라 다른 Qwen 2.1 LoRA처럼 바로 쓸 수 있어요.
 - 다른 ComfyUI 재배포본도 같은 형식(int8 ConvRot DiT, q/k/v 분리·합침 둘 다, BFL/diffusers 형식 VAE)이면 그대로 쓸 수 있어요.
 - 샘플용 DiT를 비우면 샘플도 학습용 Base로 그려요.
 - 처음 실행할 때 자동으로 받는 것: 토크나이저·설정 파일(`models/moss_image`), CLIP ViT-L/14와 얼굴 인식 모델(`models/eval`), 고른 캡션 모델(Hugging Face 캐시).
@@ -94,7 +105,9 @@ Qwen3.5 9B int8 (텍스트 인코더 파일을 그대로 씀, 기본) 또는 Qwe
 
 int8 ConvRot 가중치는 GPU에 int8 그대로 올리고(DiT ≈ 5 GB), 각 레이어 호출 때 활성값을 회전시켜 계산합니다.
 
-**Krea 2**는 Raw로 학습하고 Turbo(8 step, CFG 없음)로 샘플을 그립니다. DiT가 int8로도 12.6 GB라 28개 블록 중 6개는 RAM(고정 메모리)에 두고, 그 블록을 계산할 때만 GPU로 복사합니다(블록 스왑, ai-toolkit의 layer offloading 20%와 같은 방식). 텍스트 인코더는 캡션을 미리 인코딩해 두고 학습 전에 내려요. 토크나이저/설정 파일만 처음 실행 시 `models/moss_image` 로 자동 다운로드됩니다.
+**Krea 2**는 Raw로 학습하고 Turbo(8 step, CFG 없음)로 샘플을 그립니다. DiT가 int8로도 12.6 GB라 28개 블록 중 6개는 RAM(고정 메모리)에 두고, 그 블록을 계산할 때만 GPU로 복사합니다(블록 스왑, ai-toolkit의 layer offloading 20%와 같은 방식). 텍스트 인코더는 캡션을 미리 인코딩해 두고 학습 전에 내려요.
+
+**Qwen Image 2.1**은 기본 모델로 학습하고 Turbo(저장된 8 step 스케줄, CFG 없음)로 샘플을 그립니다. 기본 모델도 CFG 없이 쓰는 모델이에요(25 step). 텍스트는 인과(causal) 어텐션이라 이미지와 상관없이 계산되고, 학습 이미지 크기는 공식 파이프라인처럼 32의 배수로 맞춰요. DiT가 int8로 7.3 GB라 블록 스왑 없이 올라가요. 토크나이저/설정 파일만 처음 실행 시 `models/moss_image` 로 자동 다운로드됩니다.
 
 ## 속도 (RTX 5060 Ti 16GB)
 
@@ -104,6 +117,7 @@ int8 ConvRot 가중치는 GPU에 int8 그대로 올리고(DiT ≈ 5 GB), 각 레
 | MOSS-Image | 1024 | ~8.8 s | ~8 GB |
 | Krea 2 | 512 | ~4.2 s | ~12.3 GB |
 | Krea 2 | 768 | ~8.4 s | ~13.2 GB |
+| Qwen Image 2.1 | 768 / 1024 | 측정 예정 | 측정 예정 |
 
 5B 모델 학습 1 step은 768px 기준 약 97 TFLOP이라 이 GPU에서는 연산량 자체가 한계입니다.
 
@@ -122,6 +136,7 @@ oslora/
   models/moss/transformer.py  MOSS-Image DiT (공식 코드에서 이식, Apache-2.0)
   models/moss/adapter.py   텍스트 인코더 · VAE · 샘플러
   models/krea2/             Krea 2 DiT · 텍스트 인코더 · VAE · Turbo 샘플러
+  models/qwen21/            Qwen Image 2.1 DiT · 텍스트 인코더 · VAE · Turbo 샘플러
   models/offload.py        블록 스왑 (DiT 일부 블록을 RAM에 두기)
   lora.py                  LoRA 주입 / 저장 / EMA
   data.py                  데이터셋 · 버킷 · 캐시
@@ -137,5 +152,6 @@ MOSS-Image 모델 코드는 OpenMOSS-Team/MOSS-Image (Apache-2.0)의 `pipeline_m
 
 - MOSS-Image 모델·코드, Qwen3.5: Apache-2.0
 - Krea 2 모델은 Krea의 라이선스를 따라요. 쓰기 전에 모델 카드의 사용 조건을 확인하세요
+- Qwen Image 2.1 모델 가중치: **Qwen Research License** (연구용, 상업적 사용 제한). 이식한 코드의 바탕인 diffusers 구현은 Apache-2.0
 - 품질 확인에 쓰는 얼굴 인식 모델 **InsightFace buffalo_l (ArcFace w600k_r50)은 비상업적 연구용 라이선스**예요. 저장소에는 포함하지 않고 처음 실행할 때 받아요. 상업적으로 쓰려면 InsightFace 라이선스를 확인하세요.
 - 얼굴 검출 YuNet(OpenCV Zoo): Apache-2.0 / CLIP ViT-L/14(OpenAI): MIT

@@ -13,6 +13,7 @@ SETTINGS = os.path.join(ROOT, "settings.json")
 
 HF = "https://huggingface.co/Comfy-Org/MOSS-Image/blob/main/"
 HF_KREA2 = "https://huggingface.co/Comfy-Org/Krea-2/blob/main/"
+HF_QWEN21 = "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/blob/main/"
 
 # model -> file key -> what it is and where to get it (Comfy-Org repacks; files from other ComfyUI
 # repacks in the same int8 ConvRot / BFL / diffusers layouts work too)
@@ -78,7 +79,38 @@ KREA2_FILES: Dict[str, Dict[str, str]] = {
     },
 }
 
-ALL_FILES: Dict[str, Dict[str, Dict[str, str]]] = {"moss_image": MOSS_FILES, "krea2": KREA2_FILES}
+QWEN21_FILES: Dict[str, Dict[str, str]] = {
+    "dit": {
+        "label": "DiT (학습용 기본 모델)",
+        "file": "qwen_image_2.1_int8_convrot.safetensors",
+        "url": HF_QWEN21 + "diffusion_models/qwen_image_2.1_int8_convrot.safetensors",
+        "size": "7.3 GB",
+        "folder": "models/diffusion_models",
+    },
+    "inference_dit": {
+        "label": "샘플용 DiT (Turbo)",
+        "file": "qwen_image_2.1_turbo_int8_convrot.safetensors",
+        "url": HF_QWEN21 + "diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors",
+        "size": "7.3 GB",
+        "folder": "models/diffusion_models",
+    },
+    "text_encoder": {
+        "label": "텍스트 인코더 (Qwen3-VL 8B)",
+        "file": "qwen3vl_8b_int8_convrot.safetensors",
+        "url": HF_QWEN21 + "text_encoders/qwen3vl_8b_int8_convrot.safetensors",
+        "size": "9.4 GB",
+        "folder": "models/text_encoders",
+    },
+    "vae": {
+        "label": "VAE (Qwen Image 2.1)",
+        "file": "qwen_image_2.1_vae_bf16.safetensors",
+        "url": HF_QWEN21 + "vae/qwen_image_2.1_vae_bf16.safetensors",
+        "size": "0.7 GB",
+        "folder": "models/vae",
+    },
+}
+
+ALL_FILES: Dict[str, Dict[str, Dict[str, str]]] = {"moss_image": MOSS_FILES, "krea2": KREA2_FILES, "qwen21": QWEN21_FILES}
 MODEL_FILES = MOSS_FILES  # (MOSS-only callers)
 FILE_KEYS = ("dit", "inference_dit", "text_encoder", "vae")
 

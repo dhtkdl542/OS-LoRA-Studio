@@ -17,10 +17,12 @@ import numpy as np
 
 SEC_PER_STEP = {512: 2.3, 768: 4.5, 1024: 8.8, 1280: 14.5}
 # per model: seconds per step by resolution, the largest resolution worth defaulting to on 16 GB,
-# and the LoRA name prefix (Krea 2 is ~2.3x MOSS's compute; times to be replaced by measurements)
+# and the LoRA name prefix (Krea 2 measured with 6 blocks swapped, 5060 Ti)
 MODEL_PROFILE = {
     "moss_image": {"sec": SEC_PER_STEP, "max_res": 1024, "prefix": "OS_Moss_", "label": "MOSS"},
-    "krea2": {"sec": {512: 5.5, 768: 10.5, 1024: 21.0}, "max_res": 768, "prefix": "OS_Krea2_", "label": "Krea 2"},
+    "krea2": {"sec": {512: 4.2, 768: 8.4, 1024: 17.0}, "max_res": 768, "prefix": "OS_Krea2_", "label": "Krea 2"},
+    # 7B single stream, int8 DiT 7.3 GB: no block swap; ~1.4x MOSS's compute (estimate, not measured yet)
+    "qwen21": {"sec": {512: 3.3, 768: 6.3, 1024: 12.3}, "max_res": 1024, "prefix": "OS_Qwen_", "label": "Qwen 2.1"},
 }
 KINDS = {"character": "캐릭터", "style": "화풍", "object": "사물·컨셉"}
 
