@@ -1,24 +1,26 @@
 # OS LoRA Studio
 
-직접 만든 LoRA 트레이너. 현재 지원 모델: **MOSS-Image (Base)**. 다음 순서로 Krea 2, Qwen Image 2.1, MiniMax H3 추가 예정.
+직접 만든 LoRA 트레이너. 현재 지원 모델: **MOSS-Image** (Base 학습 / SFT 샘플), **Krea 2** (Raw 학습 / Turbo 샘플). 다음 순서로 Qwen Image 2.1, MiniMax H3 추가 예정.
 
 ## 요구 사양
 
 - **Windows 10/11** (폴더 선택 창, RAM 정리, .bat 실행이 Windows 기준)
 - **NVIDIA GPU + 드라이버 570 이상** (CUDA 12.8 빌드). VRAM **16GB** 기준으로 맞춰져 있어요 (1024px 학습 피크 약 12GB)
 - **Python 3.12** — [python.org](https://www.python.org/downloads/release/python-3120/)의 Windows installer로 설치 (py launcher, tcl/tk 포함)
-- RAM 32GB 권장 (학습 중 샘플용 SFT를 RAM에 대기시켜요)
-- 디스크: 모델 파일 약 21GB + 캡션 모델·평가 모델 수 GB
+- RAM 32GB 권장 (학습 중 샘플용 DiT를 RAM에 대기시켜요. Krea 2는 여기에 블록 스왑분 2.4GB가 더해져요)
+- 디스크: 모델 파일 MOSS 약 21GB / Krea 2 약 32GB + 캡션 모델·평가 모델 수 GB
 
 ## 설치와 실행
 
 1. `install.bat` — Python·GPU 확인 → venv 생성 → PyTorch(CUDA 12.8)와 패키지 설치
 2. `run.bat` — 브라우저에서 http://127.0.0.1:7870 이 열려요
-3. 처음 한 번: **학습 설정 → 모델 파일**에서 아래 4개 파일 경로를 📁 버튼으로 지정하세요. 지정한 경로는 `settings.json`에 저장돼요 (git에는 올라가지 않음)
+3. 처음 한 번: **학습 설정 → 모델 파일**에서 쓸 모델의 4개 파일 경로를 📁 버튼으로 지정하세요. 지정한 경로는 `settings.json`에 저장돼요 (git에는 올라가지 않음)
 
 ### 모델 파일
 
-모델 가중치는 자동으로 받지 않아요. ComfyUI에서 MOSS-Image를 쓰고 있다면 그 파일을 그대로 지정하면 되고, 없다면 아래에서 받으세요 (UI의 각 칸 옆 ⬇ 버튼도 같은 링크예요).
+모델 가중치는 자동으로 받지 않아요. ComfyUI에서 쓰고 있는 파일이 있으면 그대로 지정하면 되고, 없다면 아래에서 받으세요 (UI의 각 칸 옆 ⬇ 버튼도 같은 링크예요).
+
+**MOSS-Image**
 
 | 칸 | 파일 (Comfy-Org/MOSS-Image, Apache-2.0) | 크기 |
 |---|---|---|
@@ -27,6 +29,16 @@
 | 텍스트 인코더 | [qwen3.5_9b_int8_convrot.safetensors](https://huggingface.co/Comfy-Org/MOSS-Image/blob/main/text_encoders/qwen3.5_9b_int8_convrot.safetensors) | 9.7 GB |
 | VAE | [flux2-vae.safetensors](https://huggingface.co/Comfy-Org/MOSS-Image/blob/main/vae/flux2-vae.safetensors) | 0.3 GB |
 
+**Krea 2**
+
+| 칸 | 파일 (Comfy-Org/Krea-2) | 크기 |
+|---|---|---|
+| DiT (학습용 Raw) | [krea2_raw_int8_convrot.safetensors](https://huggingface.co/Comfy-Org/Krea-2/blob/main/diffusion_models/krea2_raw_int8_convrot.safetensors) | 13.5 GB |
+| 샘플용 DiT (Turbo) | [krea2_turbo_int8_convrot.safetensors](https://huggingface.co/Comfy-Org/Krea-2/blob/main/diffusion_models/krea2_turbo_int8_convrot.safetensors) | 13.5 GB |
+| 텍스트 인코더 (Qwen3-VL 4B) | [qwen3vl_4b_int8_convrot.safetensors](https://huggingface.co/Comfy-Org/Krea-2/blob/main/text_encoders/qwen3vl_4b_int8_convrot.safetensors) | 4.8 GB |
+| VAE (Wan 2.1) | [qwen_image_vae.safetensors](https://huggingface.co/Comfy-Org/Krea-2/blob/main/vae/qwen_image_vae.safetensors) | 0.25 GB |
+
+- Turbo 파생 모델(같은 구조의 int8 ConvRot)도 샘플용으로 쓸 수 있어요.
 - 다른 ComfyUI 재배포본도 같은 형식(int8 ConvRot DiT, q/k/v 분리·합침 둘 다, BFL/diffusers 형식 VAE)이면 그대로 쓸 수 있어요.
 - 샘플용 DiT를 비우면 샘플도 학습용 Base로 그려요.
 - 처음 실행할 때 자동으로 받는 것: 토크나이저·설정 파일(`models/moss_image`), CLIP ViT-L/14와 얼굴 인식 모델(`models/eval`), 고른 캡션 모델(Hugging Face 캐시).
@@ -80,14 +92,18 @@ Qwen3.5 9B int8 (텍스트 인코더 파일을 그대로 씀, 기본) 또는 Qwe
 
 학습은 Base로, 샘플·품질 확인·체크포인트 비교는 실제로 쓰는 SFT로 그립니다 (원작자 권장: Base 학습 → SFT 사용). 학습 중에는 SFT를 RAM에 대기시켰다가 그릴 때만 GPU의 Base와 교체해서 VRAM을 더 쓰지 않습니다 (RAM +5.4 GB). SFT 파일의 분리된 q/k/v는 로딩 때 하나로 합쳐서 같은 LoRA가 그대로 맞습니다.
 
-int8 ConvRot 가중치는 GPU에 int8 그대로 올리고(DiT ≈ 5 GB), 각 레이어 호출 때 활성값을 회전시켜 계산합니다. 토크나이저/설정 파일만 처음 실행 시 `models/moss_image` 로 자동 다운로드됩니다.
+int8 ConvRot 가중치는 GPU에 int8 그대로 올리고(DiT ≈ 5 GB), 각 레이어 호출 때 활성값을 회전시켜 계산합니다.
+
+**Krea 2**는 Raw로 학습하고 Turbo(8 step, CFG 없음)로 샘플을 그립니다. DiT가 int8로도 12.6 GB라 28개 블록 중 6개는 RAM(고정 메모리)에 두고, 그 블록을 계산할 때만 GPU로 복사합니다(블록 스왑, ai-toolkit의 layer offloading 20%와 같은 방식). 텍스트 인코더는 캡션을 미리 인코딩해 두고 학습 전에 내려요. 토크나이저/설정 파일만 처음 실행 시 `models/moss_image` 로 자동 다운로드됩니다.
 
 ## 속도 (RTX 5060 Ti 16GB)
 
-| 해상도 | step당 | VRAM 피크 |
-|---|---|---|
-| 768 | ~4.5 s | ~7 GB |
-| 1024 | ~8.8 s | ~8 GB |
+| 모델 | 해상도 | step당 | VRAM 피크 |
+|---|---|---|---|
+| MOSS-Image | 768 | ~4.5 s | ~7 GB |
+| MOSS-Image | 1024 | ~8.8 s | ~8 GB |
+| Krea 2 | 512 | ~4.2 s | ~12.3 GB |
+| Krea 2 | 768 | ~8.4 s | ~13.2 GB |
 
 5B 모델 학습 1 step은 768px 기준 약 97 TFLOP이라 이 GPU에서는 연산량 자체가 한계입니다.
 
@@ -105,6 +121,8 @@ oslora/
   models/quant.py          ComfyUI int8 / ConvRot 가중치 로더 (int8 상주, 회전은 활성값에)
   models/moss/transformer.py  MOSS-Image DiT (공식 코드에서 이식, Apache-2.0)
   models/moss/adapter.py   텍스트 인코더 · VAE · 샘플러
+  models/krea2/             Krea 2 DiT · 텍스트 인코더 · VAE · Turbo 샘플러
+  models/offload.py        블록 스왑 (DiT 일부 블록을 RAM에 두기)
   lora.py                  LoRA 주입 / 저장 / EMA
   data.py                  데이터셋 · 버킷 · 캐시
   autopilot.py             적응형 LR + 과적합 감시
@@ -118,5 +136,6 @@ MOSS-Image 모델 코드는 OpenMOSS-Team/MOSS-Image (Apache-2.0)의 `pipeline_m
 ## 라이선스 참고
 
 - MOSS-Image 모델·코드, Qwen3.5: Apache-2.0
+- Krea 2 모델은 Krea의 라이선스를 따라요. 쓰기 전에 모델 카드의 사용 조건을 확인하세요
 - 품질 확인에 쓰는 얼굴 인식 모델 **InsightFace buffalo_l (ArcFace w600k_r50)은 비상업적 연구용 라이선스**예요. 저장소에는 포함하지 않고 처음 실행할 때 받아요. 상업적으로 쓰려면 InsightFace 라이선스를 확인하세요.
 - 얼굴 검출 YuNet(OpenCV Zoo): Apache-2.0 / CLIP ViT-L/14(OpenAI): MIT

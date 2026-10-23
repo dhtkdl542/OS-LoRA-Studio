@@ -109,6 +109,7 @@ def main():
         n = cfg.network
         net = LoRANetwork(dit, model.lora_targets.get(n.targets, model.lora_targets["all"]), rank=n.rank, alpha=n.alpha)
         net.train(False)
+        model.block_offload(dit, log=lambda m: save(message=m))
         vae = model.vae(cfg.paths.vae)
 
         judge = None

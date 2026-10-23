@@ -29,6 +29,8 @@ class ModelAdapter:
     # renders on the training (base) model itself (leak probe references)
     base_sample_steps: int = 16
     base_sample_cfg: float = 3.0
+    # DiT blocks kept in RAM and swapped in per forward (models that don't fit 16 GB otherwise)
+    swap_blocks: int = 0
 
     # -- loaders ------------------------------------------------------------------------
     def text_encoder(self, path: str, log=print):
@@ -68,6 +70,16 @@ class ModelAdapter:
         from .swap import WeightSwap
 
         return WeightSwap(live, self.load_dit(path, device="cpu", log=log), log=log)
+
+    def block_offload(self, dit: nn.Module, log=print):
+        """Swap ``swap_blocks`` of the DiT's blocks (spread evenly) in from RAM per forward, or None.
+        Call after LoRA injection: new LoRA tensors go where their base layer lives."""
+        if not self.swap_blocks:
+            return None
+        from .offload import BlockOffload
+
+        blocks, n = dit.blocks, self.swap_blocks
+        return BlockOffload([blocks[round((i + 0.5) * len(blocks) / n - 0.5)] for i in range(n)], log=log)
 
     def caption_prompts_extra(self) -> Sequence[str]:
         return ()

@@ -324,6 +324,7 @@ class Trainer:
             p.requires_grad_(True)
         count = sum(p.numel() for p in params)
         self.rl.log(f"LoRA: {len(self.net.modules)}개 레이어, rank {n.rank}, alpha {n.alpha}, 파라미터 {count / 1e6:.1f}M")
+        self.offload = self.model.block_offload(self.dit, log=self.rl.log)
         t = cfg.train
         if t.optimizer == "adamw8bit":
             import bitsandbytes as bnb
@@ -429,6 +430,8 @@ class Trainer:
         """Move everything the training loop keeps on the GPU (DiT + LoRA, optimizer moments,
         EMA shadow) to ``device``. Parameters move in place, so the optimizer keeps its refs."""
         self.dit.to(device)
+        if self.offload and device != "cpu":
+            self.offload.place()  # the swapped blocks go back to RAM
         for state in self.opt.state.values():
             for k, v in state.items():
                 # AdamW keeps its scalar step counter on the CPU; leave it where it is
