@@ -738,6 +738,7 @@ class Trainer:
         finally:
             if self.swap:
                 self.swap.swap()
+        torch.cuda.empty_cache()  # sampling leaves reserved-but-free blocks; the VAE needs them
         self.vae.to(self.device)
         images = []
         os.makedirs(out_dir, exist_ok=True)
