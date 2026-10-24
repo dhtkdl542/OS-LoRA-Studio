@@ -2,7 +2,7 @@
 /cache/
 /output/
 /models/
-tests/out/
+/tests/
 __pycache__/
 *.safetensors
 settings.json
