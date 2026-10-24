@@ -355,7 +355,8 @@ def _findings(items: List[Dict], resolution: int) -> List[Dict]:
             if best:
                 why += (f"닮음이 좋은 원본 {len(best)}장으로 {', '.join(KIND_LABELS[k] for k in new_kinds[:len(best)])} "
                         "사본을 새로 만들어요. ")
-            why += "흐림 계열은 전체의 3분의 1 정도만 남겨요."
+            why += ("흐림 계열은 전체의 3분의 1 정도만 남겨요. 남는 사본의 캡션도 원본에서 다시 만들면서, 효과와 "
+                    "어긋나는 원본의 화질 문장(선명함·노이즈 없음·보정된 피부 등)은 빼요.")
             add("augment", "warn" if blur > max(1, int(0.35 * len(augs))) else "info", title, why,
                 [it["path"] for it in augs if it["name"] in retire] + [it["path"] for it in best],
                 "aug_rebalance", "변형 효과 다시 맞추기")
@@ -425,7 +426,7 @@ def fix(folder: str, action: str, files: List[str]) -> Dict:
             moved += 1
         return {"done": moved, "message": f"{moved}장을 '{EXCLUDED}/{reason}' 폴더로 옮겼어요 (되돌리려면 다시 꺼내면 돼요)"}
     if action == "aug_rebalance":
-        from .augment import make_copies
+        from .augment import make_copies, refresh_captions
 
         retire = [p for p in paths if os.path.basename(p).startswith(AUG_PREFIX)]
         dst_dir = os.path.join(folder, EXCLUDED, REASON_DIRS["aug_rebalance"])
@@ -433,6 +434,7 @@ def fix(folder: str, action: str, files: List[str]) -> Dict:
         for p in retire:
             _move_with_captions(p, dst_dir)
         made = make_copies([p for p in paths if p not in retire])
+        refresh_captions(folder)  # the kept copies get captions without the original's finish statements
         return {"done": len(retire) + made,
                 "message": f"변형 사본 {len(retire)}장을 '{EXCLUDED}/{REASON_DIRS['aug_rebalance']}'로 옮기고 새 효과 {made}장을 만들었어요"}
     if action == "facecrop":

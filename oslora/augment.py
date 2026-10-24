@@ -16,6 +16,7 @@ alternates the two groups, so a dataset made before an effect existed gets it.
 
 import json
 import os
+import re
 import zlib
 from typing import Dict, List
 
@@ -308,16 +309,44 @@ def _lead(kind: str, filt=None) -> str:
     return PHRASES[kind] + (" " + FILTER_PHRASES[filt] if filt else "")
 
 
+# the original caption's image-finish statements ("The image has a polished finish: sharp focus,
+# retouched skin, minimal grain ...") contradict a degraded copy and would teach that those words
+# also fit a blurry, noisy picture; the copy's effect sentences replace them
+_QUALITY = re.compile(
+    r"\b(grain|grainy|noise|noisy|retouch\w*|airbrush\w*|poreless|polished|render(?:ed|ing)?|compression|compressed|"
+    r"jpe?g|artifacts?|sharp(?:ness|ly)?|crisp|in focus|out of focus|blurr?y|blur|high[- ]resolution|low[- ]resolution|"
+    r"ai[- ]generated|digital(?:ly)?|snapshot|smooth\w*|clean|film(?:ic)?|pixel\w*|quality)\b", re.I)
+_OPENER = re.compile(r"^(the (image|photo|picture|overall|whole image)|overall|it (has|is|looks))\b", re.I)
+_MID = re.compile(r",?\s*(?:and|while|with)?\s*the (?:image|photo|overall look|whole image) (?:has|is|looks)\b.*$", re.I)
+
+
+def strip_finish(text: str) -> str:
+    """Drop a caption's image-finish statements (sharpness, grain, retouching, render look), keeping
+    the first sentence and everything that describes content. A sentence that mixes both ("The
+    lighting is even, and the image has a polished finish ...") keeps its content half."""
+    sents = [x for x in re.split(r"(?<=[.!?])\s+", text.strip()) if x]
+    out = sents[:1]
+    for s in sents[1:]:
+        cut = _MID.sub("", s)
+        if cut != s and cut.strip() and _QUALITY.search(s[len(cut):]):
+            s = cut.rstrip(" ,;") + "."
+        if "finish" in s.lower() or (_OPENER.match(s) and _QUALITY.search(s)) or len(_QUALITY.findall(s)) >= 3:
+            continue
+        out.append(s)
+    return " ".join(out)
+
+
 def _write_captions(src: str, out: str, lead: str, caption_ext: str = ".txt"):
-    """The copy's caption = the effect's sentences + the original's caption (every length)."""
+    """The copy's caption = the effect's sentences + the original's caption without its finish
+    statements (every length)."""
     variants = load_caption_variants(src)
     if variants:
-        save_caption_variants(out, {k: f"{lead} {v}" for k, v in variants.items()}, caption_ext)
+        save_caption_variants(out, {k: f"{lead} {strip_finish(v)}" for k, v in variants.items()}, caption_ext)
         return
     with open(os.path.splitext(src)[0] + caption_ext, encoding="utf-8") as f:
         caption = f.read().strip()
     with open(os.path.splitext(out)[0] + caption_ext, "w", encoding="utf-8") as f:
-        f.write(f"{lead} {caption}")
+        f.write(f"{lead} {strip_finish(caption)}")
 
 
 def parse_kind(name: str):
@@ -333,9 +362,31 @@ def aug_lead(name: str) -> str:
     return _lead(kind, filt) if kind else ""
 
 
+def _clean_own_caption(path: str, lead: str, caption_ext: str) -> bool:
+    """A copy captioned from its own pixels keeps that caption; only finish statements that
+    contradict its effect go (the effect sentences in front stay). True if anything changed."""
+    variants = load_caption_variants(path) or {}
+    out = {}
+    for k, v in variants.items():
+        body = v[len(lead):].lstrip() if lead and v.startswith(lead) else v
+        out[k] = (f"{lead} " if lead and v.startswith(lead) else "") + strip_finish(body)
+    if not variants or out == variants:
+        return False
+    model = None
+    side = os.path.splitext(path)[0] + ".captions.json"
+    try:
+        with open(side, encoding="utf-8") as f:
+            model = json.load(f).get("model")
+    except (OSError, ValueError):
+        pass
+    save_caption_variants(path, out, caption_ext, **({"model": model} if model else {}))
+    return True
+
+
 def refresh_captions(folder: str, caption_ext: str = ".txt") -> int:
-    """Rebuild a copy's caption from its original's current caption, unless the copy was captioned
-    from its own pixels (its sidecar names the caption model)."""
+    """Rebuild a copy's caption from its original's current caption (without the original's finish
+    statements). A copy captioned from its own pixels (its sidecar names the caption model) keeps
+    its caption, minus finish statements that contradict the effect."""
     names = sorted(os.listdir(folder))
     done = 0
     for n in names:
@@ -348,6 +399,7 @@ def refresh_captions(folder: str, caption_ext: str = ".txt") -> int:
             try:
                 with open(side, encoding="utf-8") as f:
                     if json.load(f).get("model"):
+                        done += _clean_own_caption(os.path.join(folder, n), _lead(kind, filt) if kind else "", caption_ext)
                         continue
             except ValueError:
                 pass
