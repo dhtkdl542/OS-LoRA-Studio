@@ -117,7 +117,9 @@ int8 ConvRot 가중치는 GPU에 int8 그대로 올리고(DiT ≈ 5 GB), 각 레
 | MOSS-Image | 1024 | ~8.8 s | ~8 GB |
 | Krea 2 | 512 | ~4.2 s | ~12.3 GB |
 | Krea 2 | 768 | ~8.4 s | ~13.2 GB |
-| Qwen Image 2.1 | 768 / 1024 | 측정 예정 | 측정 예정 |
+| Qwen Image 2.1 | 512 | ~2.6 s | ~8.0 GB |
+| Qwen Image 2.1 | 768 | ~5.6 s | ~8.7 GB |
+| Qwen Image 2.1 | 1024 | ~10.6 s | ~9.9 GB |
 
 5B 모델 학습 1 step은 768px 기준 약 97 TFLOP이라 이 GPU에서는 연산량 자체가 한계입니다.
 

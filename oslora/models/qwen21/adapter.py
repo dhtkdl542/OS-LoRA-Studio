@@ -174,8 +174,19 @@ class Qwen21VAE:
 
     @torch.no_grad()
     def decode(self, latents: torch.Tensor) -> List[Image.Image]:
-        z = latents.float().to(self.device) * self.std + self.mean
-        img = self.vae.decode(z.to(self.dtype)[:, :, None], return_dict=False)[0][:, :3, 0].float().clamp(-1, 1)
+        z = (latents.float().to(self.device) * self.std + self.mean).to(self.dtype)[:, :, None]
+        try:
+            img = self.vae.decode(z, return_dict=False)[0]
+        except torch.OutOfMemoryError:
+            # tiles need +0.4 GB instead of +3.5 (640x864) / +4.9 GB (768x1024) but differ by ~3/255,
+            # so only when the plain decode doesn't fit
+            torch.cuda.empty_cache()
+            self.vae.use_tiling = True
+            try:
+                img = self.vae.decode(z, return_dict=False)[0]
+            finally:
+                self.vae.use_tiling = False
+        img = img[:, :3, 0].float().clamp(-1, 1)
         arr = ((img + 1) * 127.5).round().to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
         return [Image.fromarray(a) for a in arr]
 

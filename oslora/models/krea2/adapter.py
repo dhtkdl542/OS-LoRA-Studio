@@ -135,7 +135,13 @@ class Krea2VAE:
         b, c4, h, w = z.shape
         z = z.reshape(b, c4 // 4, 2, 2, h, w).permute(0, 1, 4, 2, 5, 3).reshape(b, c4 // 4, h * 2, w * 2)
         z = z * self.std + self.mean
-        img = self.vae.decode(z.to(self.dtype)[:, :, None], return_dict=False)[0][:, :, 0].float().clamp(-1, 1)
+        # tiled: a plain 640x864 decode needs +4.2 GB, more than training leaves free beside the
+        # swapped DiT; tiles need +0.5 GB and differ by ~0.3/255. Encoding (the cache) stays untiled.
+        self.vae.use_tiling = True
+        try:
+            img = self.vae.decode(z.to(self.dtype)[:, :, None], return_dict=False)[0][:, :, 0].float().clamp(-1, 1)
+        finally:
+            self.vae.use_tiling = False
         arr = ((img + 1) * 127.5).round().to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
         return [Image.fromarray(a) for a in arr]
 
