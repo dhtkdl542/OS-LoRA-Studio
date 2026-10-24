@@ -147,25 +147,15 @@ run.bat
 
 | 모델 | 방식 |
 |---|---|
-| Qwen3.8 27B / Gemma 4 12B (GGUF) | [llama.cpp](https://github.com/ggml-org/llama.cpp/releases)의 `llama-server.exe`로 실행 (아래처럼 경로 지정) |
+| Qwen3.8 27B / Gemma 4 12B (GGUF) | [llama.cpp](https://github.com/ggml-org/llama.cpp/releases)의 `llama-server.exe`로 실행 (파일은 화면에서 지정하거나 받기) |
 | Qwen3.5 9B int8 | MOSS 텍스트 인코더 파일을 그대로 사용 |
 | Qwen3-VL 4B / 8B | 처음 쓸 때 Hugging Face에서 자동으로 받음 |
 
-GGUF 모델은 `settings.json`에 경로를 적어 주세요.
-[Qwen3.8 27B](https://huggingface.co/huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF) (`UD-Q3_K_XL` + `mmproj-model-bf16.gguf`),
-[Gemma 4 12B](https://huggingface.co/prithivMLmods/gemma-4-12B-it-heretic_decensored-GGUF) (`Q6_K` + `mmproj-f16.gguf`)
+GGUF 모델을 고르면 모델 선택 옆에 **📁** 버튼이 생겨요. 누르면 필요한 파일 3개(`llama-server.exe`, 모델 GGUF, 비전 프로젝터 mmproj)를 보여주고,
+- 갖고 있는 파일은 **📁**로 지정하고
+- 없는 파일은 **⬇**(또는 **없는 파일 모두 받기**)로 받아요. `llama-server.exe`는 llama.cpp 최신 Windows CUDA 빌드를, 모델은 Hugging Face에서 받아 `models/llm/`에 저장해요.
 
-```json
-{
-  "llama_cpp": {
-    "server": "C:/llama.cpp/llama-server.exe",
-    "qwen38": {"model": "C:/models/Huihui-Qwen3.8-27B-abliterated-UD-Q3_K_XL.gguf",
-               "mmproj": "C:/models/mmproj-model-bf16.gguf"},
-    "gemma4": {"model": "C:/models/gemma-4-12B-it-heretic_decensored.Q6_K.gguf",
-               "mmproj": "C:/models/gemma-4-12B-it-heretic_decensored.mmproj-f16.gguf"}
-  }
-}
-```
+캡션을 시작했는데 파일이 없으면 이 창이 자동으로 열려요.
 
 ## 학습 방식 (Autopilot)
 

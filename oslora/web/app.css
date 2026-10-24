@@ -407,3 +407,11 @@ code { background: var(--panel-2); padding: 1px 6px; border-radius: 4px; font-si
 .fn .tag { font-style: normal; font-size: 11px; color: var(--amber); margin-left: 4px; }
 .jv.flex { margin-top: 2px; }
 .jv.flex .warn { color: var(--amber); }
+/* caption model files (llama.cpp) */
+.llm-files li { display: grid; gap: 6px; }
+.llm-files .llm-head { display: flex; justify-content: space-between; gap: 10px; }
+.llm-files .llm-ok { color: var(--green, #7bd88f); }
+.llm-files .llm-miss { color: var(--amber, #ffb86b); }
+.llm-files .pick-row input { flex: 1; min-width: 0; }
+.llm-files .bar { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.llm-files .bar span { display: block; height: 100%; background: var(--lilac); transition: width .4s; }

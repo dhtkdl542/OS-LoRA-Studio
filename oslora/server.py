@@ -325,6 +325,8 @@ def defaults():
         "inference_labels": {k: get_adapter(k).inference_label for k in MODEL_NAMES},
         "fixed_steps": {k: get_adapter(k).sample_steps for k in MODEL_NAMES if get_adapter(k).distilled_steps},
         "caption_models": {k: v["label"] for k, v in CAPTION_MODELS.items()},
+        # caption models run by llama.cpp -> their file set key (paths set / downloaded in the UI)
+        "caption_llama": {k: v["gguf"] for k, v in CAPTION_MODELS.items() if v.get("quant") == "llama.cpp"},
         "busy": {"train": running("train"), "caption": running("caption"), "train_run": STATE["train_run"]},
     }
 
@@ -520,6 +522,60 @@ class CaptionStart(BaseModel):
     trigger: str = ""
     extra: str = ""
     overwrite: bool = False
+
+
+class LlamaPathsReq(BaseModel):
+    key: str
+    server: Optional[str] = None
+    model: Optional[str] = None
+    mmproj: Optional[str] = None
+
+
+class LlamaDownloadReq(BaseModel):
+    key: str
+    parts: List[str]
+
+
+def _llama_key(key: str) -> str:
+    if key not in app_settings.LLAMA_MODELS:
+        raise HTTPException(400, f"알 수 없는 캡션 모델: {key}")
+    return key
+
+
+@app.get("/api/caption/llama/{key}")
+def llama_files(key: str):
+    """llama.cpp caption model files (server / GGUF / mmproj) and the download in progress."""
+    from . import downloads
+
+    return {"status": app_settings.llama_status(_llama_key(key)), "download": downloads.status()}
+
+
+@app.post("/api/caption/llama")
+def llama_set(req: LlamaPathsReq):
+    app_settings.set_llama_paths(_llama_key(req.key), server=req.server, model=req.model, mmproj=req.mmproj)
+    return {"status": app_settings.llama_status(req.key)}
+
+
+@app.post("/api/caption/llama/download")
+def llama_download(req: LlamaDownloadReq):
+    from . import downloads
+
+    parts = [p for p in req.parts if p in ("server", "model", "mmproj")]
+    if not parts:
+        raise HTTPException(400, "받을 파일을 고르세요.")
+    err = downloads.start(_llama_key(req.key), parts)
+    if err:
+        raise HTTPException(409, err)
+    console(f"[다운로드] 캡션 모델 {req.key}: {', '.join(parts)}")
+    return {"ok": True}
+
+
+@app.post("/api/caption/llama/cancel")
+def llama_cancel():
+    from . import downloads
+
+    downloads.cancel()
+    return {"ok": True}
 
 
 @app.post("/api/caption/start")

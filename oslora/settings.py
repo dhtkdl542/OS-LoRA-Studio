@@ -124,12 +124,16 @@ LLAMA_MODELS: Dict[str, Dict[str, str]] = {
         "url": "https://huggingface.co/huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF",
         "model_file": "Huihui-Qwen3.8-27B-abliterated-UD-Q3_K_XL.gguf",
         "mmproj_file": "mmproj-model-bf16.gguf",
+        "model_size": "12.4 GB",
+        "mmproj_size": "0.9 GB",
     },
     "gemma4": {
         "label": "Gemma 4 12B it (heretic) Q6_K",
         "url": "https://huggingface.co/prithivMLmods/gemma-4-12B-it-heretic_decensored-GGUF",
         "model_file": "gemma-4-12B-it-heretic_decensored.Q6_K.gguf",
         "mmproj_file": "gemma-4-12B-it-heretic_decensored.mmproj-f16.gguf",
+        "model_size": "9.1 GB",
+        "mmproj_size": "0.2 GB",
     },
 }
 
@@ -141,14 +145,45 @@ def llama_paths(key: str) -> Dict[str, str]:
     return {"server": str(cfg.get("server") or ""), "model": str(m.get("model") or ""), "mmproj": str(m.get("mmproj") or "")}
 
 
+def set_llama_paths(key: str, server=None, model=None, mmproj=None):
+    """Remember llama.cpp paths: the server is shared by every GGUF model, model/mmproj are per model."""
+    data = load()
+    cfg = data.get("llama_cpp") or {}
+    if server is not None:
+        cfg["server"] = str(server).strip().strip('"')
+    m = cfg.get(key) or {}
+    for k, v in (("model", model), ("mmproj", mmproj)):
+        if v is not None:
+            m[k] = str(v).strip().strip('"')
+    cfg[key] = m
+    data["llama_cpp"] = cfg
+    save(data)
+
+
+def llama_status(key: str) -> Dict[str, Dict]:
+    """Per file (server / model / mmproj): path, whether it exists, what to download."""
+    info, paths = LLAMA_MODELS[key], llama_paths(key)
+    files = {
+        "server": {"label": "llama-server.exe (llama.cpp, CUDA)", "file": "llama-server.exe", "size": "약 0.6 GB",
+                   "url": LLAMA_CPP_RELEASES},
+        "model": {"label": "모델 (GGUF)", "file": info["model_file"], "size": info.get("model_size", ""), "url": info["url"]},
+        "mmproj": {"label": "비전 프로젝터 (mmproj)", "file": info["mmproj_file"], "size": info.get("mmproj_size", ""),
+                   "url": info["url"]},
+    }
+    for k, f in files.items():
+        f["path"] = paths[k]
+        f["ok"] = bool(paths[k]) and os.path.isfile(paths[k])
+    return {"label": info["label"], "files": files}
+
+
 def require_llama(key: str) -> Dict[str, str]:
     paths = llama_paths(key)
     missing = [k for k, v in paths.items() if not v or not os.path.isfile(v)]
     if missing:
         info = LLAMA_MODELS[key]
         raise FileNotFoundError(
-            f"{info['label']} 캡션에 필요한 파일이 설정되지 않았어요 ({', '.join(missing)}). settings.json의 llama_cpp에 "
-            f"경로를 넣으세요. llama-server: {LLAMA_CPP_RELEASES} / 모델·mmproj: {info['url']}")
+            f"{info['label']} 캡션에 필요한 파일이 아직 없어요 ({', '.join(missing)}). 자동 캡션의 [파일] 버튼에서 "
+            "📁로 지정하거나 ⬇로 받으세요.")
     return paths
 
 

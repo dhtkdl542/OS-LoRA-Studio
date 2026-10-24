@@ -339,6 +339,7 @@ function restoreCapSettings() {
   if (s.subject) setSeg("cap-subject", s.subject);
   if (typeof s.trigger === "string") $("#cap-trigger").value = s.trigger;
   $("#cap-over").checked = !!s.overwrite;
+  syncCapFiles();
 }
 ["#cap-model", "#cap-trigger", "#cap-over"].forEach(sel => $(sel).addEventListener("change", saveCapSettings));
 $$("#cap-style button, #cap-subject button").forEach(b => b.addEventListener("click", saveCapSettings));
@@ -350,8 +351,82 @@ async function startCaption() {
     await api("/api/caption/start", { folder: S.ds.folder, ...capSettings() });
     $("#cap-start").disabled = true;
     pollCaption();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) {
+    toast(e.message, true);
+    if (llmKey()) openLlm();  // a llama.cpp model whose files aren't there yet
+  }
 }
+
+// caption models run by llama.cpp: server / GGUF / mmproj, picked with 📁 or downloaded
+const LLM_PARTS = ["server", "model", "mmproj"];
+const llmKey = () => ((S.defaults && S.defaults.caption_llama) || {})[$("#cap-model").value] || "";
+function syncCapFiles() { $("#cap-files").hidden = !llmKey(); }
+async function openLlm() {
+  const key = llmKey();
+  if (!key) return;
+  S.llmKey = key;
+  $("#llm-modal").hidden = false;
+  await refreshLlm();
+}
+async function refreshLlm() {
+  clearTimeout(S.llmTimer);
+  if ($("#llm-modal").hidden || !S.llmKey) return;
+  let r;
+  try { r = await api(`/api/caption/llama/${S.llmKey}`); } catch (e) { $("#llm-msg").textContent = e.message; return; }
+  const { status, download: dl } = r;
+  const busy = !!dl.running, mine = busy && dl.key === S.llmKey;
+  $("#llm-name").textContent = status.label;
+  const active = document.activeElement && document.activeElement.closest("#llm-files input");
+  if (!active) {
+    $("#llm-files").innerHTML = LLM_PARTS.map(p => {
+      const f = status.files[p];
+      const now = mine && dl.part === p;
+      const pct = now && dl.total ? (100 * dl.done) / dl.total : 0;
+      const gb = x => (x / 2 ** 30).toFixed(2);
+      return `<li data-part="${p}">
+        <div class="llm-head"><b>${esc(f.label)}</b><span class="${f.ok ? "llm-ok" : "llm-miss"}">${f.ok ? "✓ 있음" : "없음"} · ${esc(f.file)}${f.size ? ` (${esc(f.size)})` : ""}</span></div>
+        <div class="pick-row"><input value="${esc(f.path)}" placeholder="경로 지정 (${esc(f.file)})" spellcheck="false">
+          <button class="btn icon llm-pick" title="찾아보기">📁</button>
+          <button class="btn icon llm-dl" title="${p === "server" ? "llama.cpp 최신 CUDA 빌드" : "Hugging Face"}에서 받기" ${busy ? "disabled" : ""}>⬇</button></div>
+        ${now ? `<div class="bar"><span style="width:${pct}%"></span></div><span class="hint">${esc(dl.message || "")}${dl.total ? ` — ${gb(dl.done)} / ${gb(dl.total)} GB` : ""}</span>` : ""}
+      </li>`;
+    }).join("");
+    $$("#llm-files li").forEach(li => {
+      const part = li.dataset.part, input = li.querySelector("input");
+      const save = async () => {
+        try { await api("/api/caption/llama", { key: S.llmKey, [part]: input.value }); } catch (e) { toast(e.message, true); }
+        refreshLlm();
+      };
+      input.addEventListener("change", save);
+      li.querySelector(".llm-pick").addEventListener("click", async () => {
+        const path = await pickPath("file", input.value, `${status.files[part].label} 선택`);
+        if (path) { input.value = path; save(); }
+      });
+      li.querySelector(".llm-dl").addEventListener("click", () => downloadLlm([part]));
+    });
+  }
+  const missing = LLM_PARTS.filter(p => !status.files[p].ok);
+  $("#llm-all").disabled = busy || !missing.length;
+  $("#llm-all").textContent = missing.length ? `없는 파일 모두 받기 (${missing.length}개)` : "모두 준비됐어요";
+  $("#llm-cancel").hidden = !mine;
+  if (!busy && dl.phase && dl.key === S.llmKey && dl.message) $("#llm-msg").textContent = dl.message;
+  if (busy) S.llmTimer = setTimeout(refreshLlm, 1000);
+}
+async function downloadLlm(parts) {
+  try { await api("/api/caption/llama/download", { key: S.llmKey, parts }); } catch (e) { return toast(e.message, true); }
+  $("#llm-msg").textContent = "받는 중이에요. 창을 닫아도 계속 받아요.";
+  refreshLlm();
+}
+$("#cap-files").addEventListener("click", openLlm);
+$("#cap-model").addEventListener("change", syncCapFiles);
+$("#llm-all").addEventListener("click", async () => {
+  let r;
+  try { r = await api(`/api/caption/llama/${S.llmKey}`); } catch (e) { return toast(e.message, true); }
+  downloadLlm(LLM_PARTS.filter(p => !r.status.files[p].ok));
+});
+$("#llm-cancel").addEventListener("click", () => api("/api/caption/llama/cancel", {}).then(refreshLlm).catch(e => toast(e.message, true)));
+$("#llm-close").addEventListener("click", () => ($("#llm-modal").hidden = true));
+$("#llm-modal").addEventListener("click", e => { if (e.target.id === "llm-modal") $("#llm-modal").hidden = true; });
 async function pollCaption() {
   clearTimeout(S.capTimer);
   let st;
@@ -953,6 +1028,7 @@ async function boot() {
   S.defaults = await api("/api/defaults");
   const d = S.defaults;
   $("#cap-model").innerHTML = Object.entries(d.caption_models).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join("");
+  setTimeout(syncCapFiles);  // after the saved caption settings pick the model
   restoreCapSettings();
   $("#tr-presets").innerHTML = Object.entries(d.presets).map(([k, p]) =>
     `<button class="preset" data-k="${k}"><b>${esc(p.label)}</b><small>${esc(p.hint)}</small></button>`).join("");
