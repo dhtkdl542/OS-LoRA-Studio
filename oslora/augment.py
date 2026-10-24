@@ -6,9 +6,10 @@ sharpness on a flash/motion-blur prompt 34-59 without the LoRA, 126-229 with it)
 degraded copies whose caption starts by naming the degradation ties the look to words instead:
 "grainy" means grainy, also on her face. The originals stay clean, so the default stays clean.
 
-Each copy gets one quality effect (grain, motion, lowres, soft, film) and every other copy also
-a colour filter (bw, warm, cool, faded, vivid): ``Aug_<kind>[-<filter>]_<original stem>.png``
-with ``<phrases> <original caption>``.
+Each copy gets one quality effect (grain, motion, lowres, soft, film, selfie, nightselfie) and
+every other copy also a colour filter (bw, warm, cool, faded, vivid):
+``Aug_<kind>[-<filter>]_<original stem>.png`` with ``<phrases> <original caption>``. New copies
+take the effects the folder has fewest of, so a dataset made before an effect existed gets it.
 """
 
 import json
@@ -54,6 +55,22 @@ FILTER_PHRASES: Dict[str, str] = {
     "vivid": "A punchy, high-contrast filter with deep shadows and strongly saturated colors.",
 }
 FILTERS = list(FILTER_PHRASES)
+KIND_LABELS = {"grain": "노이즈", "motion": "흔들림", "lowres": "저해상도", "soft": "초점 흐림", "film": "필름",
+               "selfie": "폰 셀카", "nightselfie": "밤 셀카"}
+FILTER_LABELS = {"bw": "흑백", "warm": "따뜻한 톤", "cool": "차가운 톤", "faded": "빛바램", "vivid": "쨍한"}
+
+
+def coverage(names) -> tuple:
+    """How many copies of each effect / colour filter a folder already has: ({kind: n}, {filter: n})."""
+    kinds, filters = {k: 0 for k in KINDS}, {f: 0 for f in FILTERS}
+    for n in names:
+        if n.startswith(AUG_PREFIX) and n.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+            k, f = parse_kind(n)
+            if k:
+                kinds[k] += 1
+            if f:
+                filters[f] += 1
+    return kinds, filters
 
 
 def _rng(name: str) -> np.random.Generator:
@@ -265,25 +282,21 @@ def refresh_captions(folder: str, caption_ext: str = ".txt") -> int:
 
 
 def make_copies(paths: List[str], caption_ext: str = ".txt") -> int:
-    """One copy per image: quality effects cycle through every copy, colour filters through
-    every other one; the caption gets the effects' sentences in front. Images without a
-    caption are skipped (caption them first)."""
+    """One copy per image, every other one also with a colour filter; the caption gets the
+    effects' sentences in front. Each copy takes the effect (and filter) the folder has fewest
+    copies of, so effects added later get made before repeats. Images without a caption are
+    skipped (caption them first)."""
     made = 0
-    # effects the folder has fewest copies of come first (new kinds get used before repeats)
     folder = os.path.dirname(paths[0]) if paths else ""
-    have = {k: 0 for k in KINDS}
-    for n in (os.listdir(folder) if folder and os.path.isdir(folder) else []):
-        if n.startswith(AUG_PREFIX) and not n.endswith((caption_ext, ".json")):
-            k = parse_kind(n)[0]
-            if k in have:
-                have[k] += 1
-    order = sorted(KINDS, key=lambda k: (have[k], KINDS.index(k)))
-    for i, p in enumerate(paths):
+    have, have_f = coverage(os.listdir(folder) if folder and os.path.isdir(folder) else [])
+    i = 0
+    for p in paths:
         cap_path = os.path.splitext(p)[0] + caption_ext
         if not os.path.isfile(cap_path):
             continue
-        kind = order[i % len(order)]
-        filt = FILTERS[(i // 2) % len(FILTERS)] if i % 2 == 1 else None
+        kind = min(KINDS, key=lambda k: (have[k], KINDS.index(k)))
+        filt = min(FILTERS, key=lambda f: (have_f[f], FILTERS.index(f))) if i % 2 == 1 else None
+        i += 1
         out = aug_path(p, kind + (f"-{filt}" if filt else ""))
         if os.path.isfile(out):
             continue
@@ -293,5 +306,8 @@ def make_copies(paths: List[str], caption_ext: str = ".txt") -> int:
                 im = _tone(im, filt)
             FUNCS[kind](im, _rng(os.path.basename(out))).save(out)
         _write_captions(p, out, _lead(kind, filt), caption_ext)
+        have[kind] += 1
+        if filt:
+            have_f[filt] += 1
         made += 1
     return made

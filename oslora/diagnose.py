@@ -92,6 +92,8 @@ def analyze(folder: str, resolution: int = 1024, progress: Optional[Callable[[in
             with open(cp, encoding="utf-8") as f:
                 cached = json.load(f)
             if cached.get("signature") == sig and cached.get("resolution") == resolution                     and cached.get("version") == REPORT_VERSION:
+                # the per-image analysis is reusable; the findings are cheap, so newer rules apply
+                cached["findings"] = _findings(cached["items"], resolution)
                 return cached
         except Exception:
             pass
@@ -330,6 +332,25 @@ def _findings(items: List[Dict], resolution: int) -> List[Dict]:
     want = aug_target - len(augs)
     used = has_crop | {it.get("source") for it in augs}
     candidates = [it for it in originals if "face" in it and it["name"] not in used and it.get("caption_words")]
+    from .augment import FILTER_LABELS, KIND_LABELS, coverage
+
+    have, have_f = coverage([it["name"] for it in augs])
+    missing = [k for k, n in have.items() if n == 0]
+    if augs and missing and candidates:
+        # effects added after this dataset got its copies: one copy each (they are made first),
+        # without pushing the total past the "too many" line
+        n = min(max(want, len(missing)), len(candidates), max(0, int(max(3, aug_target * 1.5)) - len(augs)))
+        if n > 0:
+            best = sorted(candidates, key=lambda it: it["face"].get("sim", 0), reverse=True)[:n]
+            done = ", ".join(f"{KIND_LABELS[k]} {c}" for k, c in have.items() if c)
+            no_f = [FILTER_LABELS[f] for f, c in have_f.items() if c == 0]
+            add("augment", "info", f"아직 없는 변형 효과가 있어요: {', '.join(KIND_LABELS[k] for k in missing)}",
+                f"지금 있는 변형 사본: {done}장. 나중에 추가된 효과라 이 데이터셋엔 아직 없어요. 크롭·변형하지 않은 "
+                f"사진 중 닮음이 가장 좋은 {len(best)}장으로 없는 효과부터 하나씩 만들어요"
+                + (f" (두 장에 한 장은 아직 없는 색 필터도: {', '.join(no_f)})" if no_f else "")
+                + ". 기존 사본은 그대로 두고, 캡션 맨 앞에 어떤 효과인지 적어요.",
+                [it["path"] for it in best], "augment", f"빠진 효과 {len(best)}장 만들기")
+            want = 0
     if want > 0 and candidates:
         best = sorted(candidates, key=lambda it: it["face"].get("sim", 0), reverse=True)[:want]
         add("augment", "info", f"화질 변형 사본 {len(best)}장을 더할 수 있어요",
