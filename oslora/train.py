@@ -900,6 +900,10 @@ class Trainer:
         t_start = time.time() - 1e-3
         step0 = step  # speed / ETA are measured over this session's steps
         stop_reason = "완료"
+        from .gpustat import GpuMonitor
+
+        gpu = GpuMonitor()  # sampled only while training steps run (not evals / samples)
+        span_time, span_steps = 0.0, 0
         while step < max_steps:
             if self.rl.pause_requested():
                 t_start += self.pause(step)  # paused time does not count toward speed / ETA
@@ -915,6 +919,7 @@ class Trainer:
             lr = ap.lr_at(step) if ap_on else self._cosine_lr(step, max_steps)
             for group in self.opt.param_groups:
                 group["lr"] = lr
+            gpu.active, t_step = True, time.time()
 
             batch = sampler.next()
             x0 = torch.stack([self._train_latent(it) for it in batch]).to(self.device, torch.float32)
@@ -946,6 +951,8 @@ class Trainer:
             if self.ema:
                 self.ema.update()
             step += 1
+            gpu.active = False
+            span_time, span_steps = span_time + time.time() - t_step, span_steps + 1
 
             if step % 5 == 0 or step == 1:
                 self.rl.metric(type="step", step=step, loss=loss_v, lr=lr, gnorm=gnorm, t=float(tt[0]))
@@ -977,11 +984,17 @@ class Trainer:
                         best_weights, best_step = self.lora_weights(), step
                 if not d.rollback:
                     self._mark_best("val", step, val, save_every, max_steps)
+                # this span's training steps only: s/step, and how busy the GPU was meanwhile
+                g, spt = gpu.take(), span_time / max(1, span_steps)
+                span_time, span_steps = 0.0, 0
                 self.rl.metric(type="eval", step=step, fit=fit, val=val, leak=leak, lr=d.lr, action=d.action,
-                               reason=d.reason, score=d.score, best=d.is_best)
+                               reason=d.reason, score=d.score, best=d.is_best, sec_per_step=spt,
+                               gpu_util=g and g["util"], gpu_watts=g and g["watts"])
+                speed = f"{spt:.1f}초/step" + (f", GPU {g['util']:.0f}% {g['watts']:.0f}W" if g else "")
                 self.rl.log(
                     f"[평가 {step}] fit {fit:.4f}" + (f" val {val:.4f}" if val is not None else "")
                     + f" leak {leak:.2e} score {d.score:.4f}{' ★' if d.is_best else ''} | LR {d.lr:.2e} | {d.reason}"
+                    + f" | 학습 {speed}"
                 )
                 self.rl.set_status(best_step=best_step, strikes=ap.strikes, last_action=d.action, last_reason=d.reason)
                 if d.stop:

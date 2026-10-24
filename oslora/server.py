@@ -363,6 +363,11 @@ def system():
         mem = pynvml.nvmlDeviceGetMemoryInfo(h)
         out.update(gpu=pynvml.nvmlDeviceGetUtilizationRates(h).gpu, vram_used=mem.used / 2**30,
                    vram_total=mem.total / 2**30, gpu_name=_GPU.name, gpu_temp=pynvml.nvmlDeviceGetTemperature(h, 0))
+        try:
+            out.update(power_w=pynvml.nvmlDeviceGetPowerUsage(h) / 1000,
+                       power_limit_w=pynvml.nvmlDeviceGetEnforcedPowerLimit(h) / 1000)
+        except pynvml.NVMLError:
+            pass
     return out
 
 

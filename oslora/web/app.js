@@ -923,6 +923,10 @@ async function refreshSystem() {
     setMeter("#m-vram", s.vram_used / s.vram_total, `${s.vram_used.toFixed(1)}/${Math.round(s.vram_total)}GB`, s.vram_used / s.vram_total > 0.92);
     setMeter("#m-gpu", s.gpu / 100, `${s.gpu}%  ${s.gpu_temp}°C`, s.gpu_temp >= 83);
     $("#m-gpu").title = s.gpu_name || "";
+    if (s.power_limit_w) {
+      $("#m-pwr").hidden = false;
+      setMeter("#m-pwr", s.power_w / s.power_limit_w, `${Math.round(s.power_w)}/${Math.round(s.power_limit_w)}W`, false);
+    }
   } else {
     $("#m-vram").hidden = $("#m-gpu").hidden = true;
   }
