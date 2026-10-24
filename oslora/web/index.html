@@ -160,6 +160,10 @@
             <label class="field"><span>옵티마이저</span><select id="tr-opt"><option>adamw</option><option>adamw8bit</option></select></label>
           </div>
           <label class="check" title="학습 step의 4분의 1은 이미지에 폰카 센서 노이즈를 입혀서 봐요(색·밝기·대비는 그대로). 데이터가 너무 깨끗하면 LoRA가 '이 사람은 늘 매끈하다'까지 배우는 걸 막아요. 데이터 파일은 그대로예요."><input type="checkbox" id="tr-photo" checked> 사진 질감 입히기 <em>(폰카 노이즈만, 학습의 1/4)</em></label>
+          <div class="row3">
+            <label class="field" title="중간 저장 LoRA를 최근 몇 개만 남길지. 넘으면 가장 오래된 것부터 지워요. 추천·마지막·★(닮음 최고·홀드아웃 최저) 파일은 항상 남아요. 0이면 전부 남겨요."><span>중간 저장 최대 <em>0 = 전부</em></span><input type="number" id="tr-keep" value="3" min="0" step="1"></label>
+          </div>
+          <label class="check" title="학습이 끝나면 이어하기용 상태 파일(1GB 이상), 이어하기 때 옮겨 둔 예전 파일, 품질 검사 이미지를 지워요. LoRA 파일과 샘플은 남고, 이어서 학습도 할 수 있어요(옵티마이저 상태만 새로 시작)."><input type="checkbox" id="tr-cleanup" checked> 학습 끝나면 정리 <em>(LoRA·샘플만 남기기)</em></label>
           <label class="check" title="학습 이미지를 512·768에서도 같이 배워요 (학습 해상도와 고르게 섞음). 평균 step 시간이 절반 가까이로 줄고, 크기가 달라도 얼굴이 덜 무너져요. 검증과 품질 확인은 학습 해상도 그대로예요."><input type="checkbox" id="tr-multires"> 해상도 섞기 <em>(512·768 추가, 약 1.7배 빠름)</em></label>
         </div>
       </div>

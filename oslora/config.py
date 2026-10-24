@@ -183,6 +183,8 @@ class RunConfig:
     kind: str = "character"  # character / style / object (taste learning is kept per kind)
     output_dir: str = "output"
     save_every: Union[str, int] = "auto"
+    save_keep: int = 0  # regular checkpoints kept (newest first); 0 = all. Best-of / final files always stay
+    cleanup: bool = False  # when done: drop resume states, moved-aside files and quality renders
     paths: ModelPaths = field(default_factory=ModelPaths)
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)

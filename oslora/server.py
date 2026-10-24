@@ -655,6 +655,8 @@ class TrainReq(BaseModel):
     holdout: str = "auto"
     caption_dropout: float = 0.05
     photo_texture: bool = False  # a quarter of the steps see the image with phone sensor noise
+    save_keep: int = 3  # regular checkpoints kept (0 = all)
+    cleanup: bool = True  # drop resume states / quality renders when done
     int8_compute: bool = False  # int8 tensor cores for the frozen weights (faster, experimental)
     multires: bool = False  # also train at 512 / 768 (sampled evenly with the main resolution)
     ema: float = 0.99
@@ -810,6 +812,7 @@ def train_start(req: TrainReq):
     cfg.dataset.photo_texture = photoreal.RATE if req.photo_texture else 0.0
     cfg.train.int8_compute = bool(req.int8_compute)
     cfg.dataset.multires = [r for r in (512, 768) if r < req.resolution] if req.multires else []
+    cfg.save_keep, cfg.cleanup = max(0, int(req.save_keep)), bool(req.cleanup)
     cfg.network.rank, cfg.network.alpha = req.rank, req.alpha
     ms = req.max_steps.strip()
     cfg.train.max_steps = "auto" if ms in ("", "auto") else int(ms)

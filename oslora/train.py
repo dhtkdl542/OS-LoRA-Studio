@@ -543,6 +543,50 @@ class Trainer:
         return upd
 
     # ------------------------------------------------------------------ resume state
+    def _prune_saves(self, save_every: int, step: int):
+        """Keep the newest ``save_keep`` regular checkpoints (LoRA file + its resume state); best-of
+        files (★) and the steps after this one are never touched."""
+        keep = int(getattr(self.cfg, "save_keep", 0) or 0)
+        if keep <= 0:
+            return
+        name = self.cfg.name
+        marked = {v.get("step") for v in getattr(self, "marks", {}).values()}
+        regular = sorted(s for s in range(save_every, step + 1, save_every)
+                         if s not in marked and os.path.isfile(os.path.join(self.run_dir, f"{name}_{s:05d}.safetensors")))
+        gone = regular[:-keep]
+        for s in gone:
+            for p in (os.path.join(self.run_dir, f"{name}_{s:05d}.safetensors"),
+                      os.path.join(self._ckpt_dir(), f"state_{s:05d}.pt")):
+                if os.path.isfile(p):
+                    os.remove(p)
+        if gone:
+            self.rl.log(f"중간 저장 정리: 최근 {keep}개만 남기고 step {', '.join(map(str, gone))} 파일을 지웠어요 (★ 파일은 그대로)")
+
+    def _cleanup(self, step: int):
+        """After the run: what only served resuming or the quality checks goes. The LoRA files,
+        samples, metrics and the last step's small state (continue later, not bit-exact) stay."""
+        import shutil
+
+        freed = 0
+
+        def size(p):
+            if os.path.isfile(p):
+                return os.path.getsize(p)
+            return sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(p) for f in fs)
+
+        d = self._ckpt_dir()
+        for f in os.listdir(d):
+            if f != f"state_{step:05d}.pt":
+                freed += size(os.path.join(d, f))
+                os.remove(os.path.join(d, f))
+        for sub in [os.path.join(self.run_dir, "samples", "quality")] + [
+                os.path.join(self.run_dir, f) for f in os.listdir(self.run_dir) if f.startswith("_이어하기전_")]:
+            if os.path.isdir(sub):
+                freed += size(sub)
+                shutil.rmtree(sub, ignore_errors=True)
+        self.rl.log(f"정리: 이어하기용 상태·품질 검사 이미지 등 {freed / 2**30:.1f} GB를 지웠어요 "
+                    f"(LoRA 파일과 샘플은 그대로, step {step}부터 이어서 학습은 가능하지만 옵티마이저 상태는 새로 시작해요)")
+
     def _ckpt_dir(self) -> str:
         d = os.path.join(self.run_dir, "checkpoints")
         os.makedirs(d, exist_ok=True)
@@ -1007,6 +1051,7 @@ class Trainer:
                 with self.using_ema():
                     self.save_lora(os.path.join(self.run_dir, f"{cfg.name}_{step:05d}.safetensors"), extra={"ss_steps": step})
                 self.save_state(step, ap, sampler, best_weights, best_step, full=True)
+                self._prune_saves(save_every, step)
             if sample_every and step % sample_every == 0 and step < max_steps:
                 self.sample_images(step)
             if self.evaluator is not None and step % quality_every == 0 and step < max_steps:
@@ -1038,6 +1083,8 @@ class Trainer:
             else:
                 self.load_lora_weights(best_weights)
             self.sample_images(step)
+        if cfg.cleanup:
+            self._cleanup(step)
         self.rl.set_status(phase="done", step=step, best_step=best_step, message=f"완료 - {stop_reason}")
 
     def _cosine_lr(self, step: int, max_steps: int) -> float:

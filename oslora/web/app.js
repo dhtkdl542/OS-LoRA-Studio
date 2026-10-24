@@ -508,6 +508,7 @@ async function startTraining() {
     min_lr: +$("#tr-minlr").value, max_lr: +$("#tr-maxlr").value, start_lr: +$("#tr-startlr").value,
     early_stop: $("#tr-early").checked,
     holdout: $("#tr-holdout").value, caption_dropout: +$("#tr-cdrop").value, photo_texture: $("#tr-photo").checked, int8_compute: false, multires: $("#tr-multires").checked, ema: +$("#tr-ema").value,
+    save_keep: Math.max(0, parseInt($("#tr-keep").value, 10) || 0), cleanup: $("#tr-cleanup").checked,
     optimizer: $("#tr-opt").value, lr: +$("#tr-lr").value,
     // several prompts are separated by a line containing only ---; line breaks inside a prompt stay
     samples: $("#tr-samples").value.split(/^\s*---\s*$/m).map(s => s.trim()).filter(Boolean),
@@ -611,8 +612,8 @@ $("#auto-modal").addEventListener("click", e => { if (e.target.id === "auto-moda
 
 // training form survives a page refresh / server restart (per-browser convenience only)
 const TRAIN_FIELDS = ["tr-name", "tr-trigger", "tr-steps", "tr-rank", "tr-alpha", "tr-minlr", "tr-startlr", "tr-maxlr",
-  "tr-holdout", "tr-ema", "tr-cdrop", "tr-opt", "tr-lr", "tr-samples", "tr-severy", "tr-sw", "tr-sh"];
-const TRAIN_CHECKS = ["tr-ap", "tr-early", "tr-photo", "tr-multires"];
+  "tr-holdout", "tr-ema", "tr-cdrop", "tr-opt", "tr-lr", "tr-samples", "tr-severy", "tr-sw", "tr-sh", "tr-keep"];
+const TRAIN_CHECKS = ["tr-ap", "tr-early", "tr-photo", "tr-multires", "tr-cleanup"];
 function saveTrainSettings() {
   const s = { preset: S.preset, res: segValue("tr-res"), samplesSig: S.defaults && S.defaults.samples_sig };
   TRAIN_FIELDS.forEach(id => (s[id] = $(`#${id}`).value));
