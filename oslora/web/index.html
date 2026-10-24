@@ -159,7 +159,7 @@
             <label class="field"><span>캡션 드롭아웃</span><input id="tr-cdrop" value="0.05"></label>
             <label class="field"><span>옵티마이저</span><select id="tr-opt"><option>adamw</option><option>adamw8bit</option></select></label>
           </div>
-          <label class="check" title="학습 step의 절반은 이미지에 실제 사진 같은 마감(자연스러운 사진 톤 + 폰카 센서 노이즈)을 입혀서 봐요. 데이터가 너무 깨끗하면 LoRA가 '이 사람은 늘 깨끗하다'까지 배우는 걸 막아요. 데이터 파일은 그대로예요."><input type="checkbox" id="tr-photo" checked> 사진 질감 입히기 <em>(자연스러운 사진 톤 + 폰카 노이즈, 학습의 절반)</em></label>
+          <label class="check" title="학습 step의 4분의 1은 이미지에 폰카 센서 노이즈를 입혀서 봐요(색·밝기·대비는 그대로). 데이터가 너무 깨끗하면 LoRA가 '이 사람은 늘 매끈하다'까지 배우는 걸 막아요. 데이터 파일은 그대로예요."><input type="checkbox" id="tr-photo" checked> 사진 질감 입히기 <em>(폰카 노이즈만, 학습의 1/4)</em></label>
           <label class="check" title="학습 이미지를 512·768에서도 같이 배워요 (학습 해상도와 고르게 섞음). 평균 step 시간이 절반 가까이로 줄고, 크기가 달라도 얼굴이 덜 무너져요. 검증과 품질 확인은 학습 해상도 그대로예요."><input type="checkbox" id="tr-multires"> 해상도 섞기 <em>(512·768 추가, 약 1.7배 빠름)</em></label>
         </div>
       </div>

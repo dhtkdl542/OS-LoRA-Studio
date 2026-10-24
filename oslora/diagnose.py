@@ -31,7 +31,8 @@ from .data import AUG_PREFIX, CROP_PREFIX, IMAGE_EXTS, is_derived
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE = os.path.join(ROOT, "cache", "diagnosis")
 EXCLUDED = "excluded"
-REASON_DIRS = {"look": "다른사람같음", "duplicate": "중복", "blurry": "흐림", "crop": "크롭과다", "aug": "변형과다"}
+REASON_DIRS = {"look": "다른사람같음", "duplicate": "중복", "blurry": "흐림", "crop": "크롭과다", "aug": "변형과다",
+               "aug_rebalance": "변형정리"}
 REPORT_VERSION = 3  # 2: face crops paired with their originals, 3: augmented copies
 
 
@@ -332,32 +333,41 @@ def _findings(items: List[Dict], resolution: int) -> List[Dict]:
     want = aug_target - len(augs)
     used = has_crop | {it.get("source") for it in augs}
     candidates = [it for it in originals if "face" in it and it["name"] not in used and it.get("caption_words")]
-    from .augment import FILTER_LABELS, KIND_LABELS, coverage
+    from .augment import BLUR_KINDS, KIND_LABELS, coverage, plan_rebalance
 
-    have, have_f = coverage([it["name"] for it in augs])
-    missing = [k for k, n in have.items() if n == 0]
-    if augs and missing and candidates:
-        # effects added after this dataset got its copies: one copy each (they are made first),
-        # without pushing the total past the "too many" line
-        n = min(max(want, len(missing)), len(candidates), max(0, int(max(3, aug_target * 1.5)) - len(augs)))
-        if n > 0:
-            best = sorted(candidates, key=lambda it: it["face"].get("sim", 0), reverse=True)[:n]
+    have, _ = coverage([it["name"] for it in augs])
+    if augs and len(augs) <= max(3, aug_target * 1.5):
+        # the copies should spread over many looks, not pile up on one (duplicates) or on the
+        # softening ones; effects added later count as missing. Same copy count, rearranged.
+        retire, new_kinds = plan_rebalance([it["name"] for it in augs], aug_target, int(max(3, aug_target * 1.5)))
+        new_kinds = new_kinds[:len(candidates)]
+        if retire or new_kinds:
+            best = sorted(candidates, key=lambda it: it["face"].get("sim", 0), reverse=True)[:len(new_kinds)]
+            blur = sum(c for k, c in have.items() if k in BLUR_KINDS)
             done = ", ".join(f"{KIND_LABELS[k]} {c}" for k, c in have.items() if c)
-            no_f = [FILTER_LABELS[f] for f, c in have_f.items() if c == 0]
-            add("augment", "info", f"아직 없는 변형 효과가 있어요: {', '.join(KIND_LABELS[k] for k in missing)}",
-                f"지금 있는 변형 사본: {done}장. 나중에 추가된 효과라 이 데이터셋엔 아직 없어요. 크롭·변형하지 않은 "
-                f"사진 중 닮음이 가장 좋은 {len(best)}장으로 없는 효과부터 하나씩 만들어요"
-                + (f" (두 장에 한 장은 아직 없는 색 필터도: {', '.join(no_f)})" if no_f else "")
-                + ". 기존 사본은 그대로 두고, 캡션 맨 앞에 어떤 효과인지 적어요.",
-                [it["path"] for it in best], "augment", f"빠진 효과 {len(best)}장 만들기")
+            title = (f"변형 효과가 흐림 쪽으로 쏠려 있어요 (흐림 계열 {blur}/{len(augs)}장)"
+                     if blur > max(1, int(0.35 * len(augs))) else "변형 효과를 더 다양하게 바꿀 수 있어요")
+            why = (f"지금 있는 변형 사본: {done}장. 사본은 여러 가지 모습을 한 장씩 보여줘야 효과가 있어요. 같은 효과가 "
+                   "여러 장이거나 흐림 계열(흔들림·저해상도·초점 흐림·셀카)이 많으면, 캐릭터가 그 모습으로 끌려가서 잔머리·피부 "
+                   "경계가 무뎌질 수 있어요. ")
+            if retire:
+                why += f"중복되거나 넘치는 사본 {len(retire)}장은 excluded/변형정리 폴더로 옮기고(지우지 않아요), "
+            if best:
+                why += (f"닮음이 좋은 원본 {len(best)}장으로 {', '.join(KIND_LABELS[k] for k in new_kinds[:len(best)])} "
+                        "사본을 새로 만들어요. ")
+            why += "흐림 계열은 전체의 3분의 1 정도만 남겨요."
+            add("augment", "warn" if blur > max(1, int(0.35 * len(augs))) else "info", title, why,
+                [it["path"] for it in augs if it["name"] in retire] + [it["path"] for it in best],
+                "aug_rebalance", "변형 효과 다시 맞추기")
             want = 0
     if want > 0 and candidates:
         best = sorted(candidates, key=lambda it: it["face"].get("sim", 0), reverse=True)[:want]
         add("augment", "info", f"화질 변형 사본 {len(best)}장을 더할 수 있어요",
             "데이터가 전부 깨끗하면 LoRA가 '이 사람은 늘 깨끗하다'까지 배워서, 노이즈·흔들림·저화질을 요청해도 "
-            f"지워버려요. 크롭하지 않은 사진 중 닮음이 가장 좋은 {len(best)}장에 노이즈·흔들림·저해상도·초점 "
-            "흐림·필름·폰 셀카(빛바랜 전면카메라)·밤 셀카 효과를 하나씩, 두 장에 한 장은 흑백·따뜻한 톤·차가운 톤·빛바램·쨍한 필터도 함께 걸어 "
-            "Aug_ 사본을 만들고, 캡션 맨 앞에 어떤 효과인지 적어요 (원본은 그대로).",
+            f"지워버려요. 크롭하지 않은 사진 중 닮음이 가장 좋은 {len(best)}장에 효과를 하나씩 걸어 Aug_ 사본을 만들어요. "
+            "효과는 노이즈·플래시·폰 HDR·필름·빛샘·강한 대비·과다 노출 같은 또렷한 것과 흔들림·저해상도·초점 흐림·셀카 같은 "
+            "흐린 것을 섞되, 흐린 것은 3분의 1 정도만 써요. 두 장에 한 장은 흑백·따뜻한 톤·차가운 톤·빛바램·쨍한 필터도 함께 "
+            "걸고, 캡션 맨 앞에 어떤 효과인지 적어요 (원본은 그대로).",
             [it["path"] for it in best], "augment", f"화질 변형 {len(best)}장 만들기")
 
     if not out:
@@ -394,6 +404,14 @@ def _crop_box(it: Dict, padding: float = 0.9, min_side: int = 512):
     return int(left), int(top), int(left + side), int(top + side)
 
 
+def _move_with_captions(path: str, dst_dir: str):
+    """Move an image with its caption files (.txt and the 3-length .captions.json)."""
+    stem = os.path.splitext(path)[0]
+    for src in (path, stem + ".txt", stem + ".captions.json"):
+        if os.path.isfile(src):
+            shutil.move(src, os.path.join(dst_dir, os.path.basename(src)))
+
+
 def fix(folder: str, action: str, files: List[str]) -> Dict:
     """Apply a finding's fix to the given file names (relative to ``folder``)."""
     paths = [os.path.join(folder, f) for f in files if os.path.isfile(os.path.join(folder, f))]
@@ -403,11 +421,20 @@ def fix(folder: str, action: str, files: List[str]) -> Dict:
         os.makedirs(dst_dir, exist_ok=True)
         moved = 0
         for p in paths:
-            for src in (p, os.path.splitext(p)[0] + ".txt"):
-                if os.path.isfile(src):
-                    shutil.move(src, os.path.join(dst_dir, os.path.basename(src)))
+            _move_with_captions(p, dst_dir)
             moved += 1
         return {"done": moved, "message": f"{moved}장을 '{EXCLUDED}/{reason}' 폴더로 옮겼어요 (되돌리려면 다시 꺼내면 돼요)"}
+    if action == "aug_rebalance":
+        from .augment import make_copies
+
+        retire = [p for p in paths if os.path.basename(p).startswith(AUG_PREFIX)]
+        dst_dir = os.path.join(folder, EXCLUDED, REASON_DIRS["aug_rebalance"])
+        os.makedirs(dst_dir, exist_ok=True)
+        for p in retire:
+            _move_with_captions(p, dst_dir)
+        made = make_copies([p for p in paths if p not in retire])
+        return {"done": len(retire) + made,
+                "message": f"변형 사본 {len(retire)}장을 '{EXCLUDED}/{REASON_DIRS['aug_rebalance']}'로 옮기고 새 효과 {made}장을 만들었어요"}
     if action == "facecrop":
         report = analyze(folder)
         by_name = {it["name"]: it for it in report["items"]}

@@ -6,10 +6,12 @@ sharpness on a flash/motion-blur prompt 34-59 without the LoRA, 126-229 with it)
 degraded copies whose caption starts by naming the degradation ties the look to words instead:
 "grainy" means grainy, also on her face. The originals stay clean, so the default stays clean.
 
-Each copy gets one quality effect (grain, motion, lowres, soft, film, selfie, nightselfie) and
-every other copy also a colour filter (bw, warm, cool, faded, vivid):
-``Aug_<kind>[-<filter>]_<original stem>.png`` with ``<phrases> <original caption>``. New copies
-take the effects the folder has fewest of, so a dataset made before an effect existed gets it.
+Each copy gets one effect and every other copy also a colour filter (bw, warm, cool, faded, vivid):
+``Aug_<kind>[-<filter>]_<original stem>.png`` with ``<phrases> <original caption>``. Effects that
+soften the image (motion, lowres, soft, selfie, nightselfie) are kept to about a third of the
+copies; the rest add flash, light leaks, over-exposure, harsh contrast, HDR, grain or film looks,
+which keep the detail. New copies take the effects the folder has fewest of, in an order that
+alternates the two groups, so a dataset made before an effect existed gets it.
 """
 
 import json
@@ -43,8 +45,25 @@ PHRASES: Dict[str, str] = {
                "muted, desaturated colors."),
     "nightselfie": ("A dim low-light front-camera phone selfie. The image is soft and slightly blurry, with smeared "
                     "noise, murky lifted gray shadows, a faint warm cast and muted colors."),
+    # looks that keep (or add) sharp detail, so the copies don't pull the character towards soft
+    "flash": ("A direct on-camera flash photo. The flash lights her face and the front of her body brightly and flatly, "
+              "with crisp detail, slightly hot highlights on the skin and hard little shadows behind her, while the "
+              "background falls off into darkness."),
+    "lightleak": ("A photo with a warm light leak: a red-orange glow bleeds in from one edge of the frame and washes "
+                  "over that side, while the rest of the image stays sharp."),
+    "overexposed": ("A bright, overexposed high-key photo. The highlights are blown out to white, the shadows are light "
+                    "and airy and the colors are pale, but the edges and hair stay sharp."),
+    "harsh": ("A high-contrast photo in harsh, hard light: deep crushed shadows, bright highlights, punchy texture and "
+              "crisp, sharp detail in her hair and skin."),
+    "hdr": ("An over-processed phone photo with heavy HDR and over-sharpening: bright halos along the edges, crunchy "
+            "detail in her hair and skin, and boosted local contrast."),
 }
-KINDS = list(PHRASES)
+# blur / softening effects alternate with ones that keep detail, so the first copies of a dataset
+# spread over both (7 copies -> 2 soft ones)
+KINDS = ["grain", "flash", "motion", "hdr", "film", "lightleak", "lowres", "harsh", "selfie", "overexposed", "soft",
+         "nightselfie"]
+BLUR_KINDS = {"motion", "lowres", "soft", "selfie", "nightselfie"}
+BLUR_SHARE = 0.35  # at most about a third of a dataset's copies soften the image
 
 # colour filters (phone / SNS filter looks), stacked on every other copy
 FILTER_PHRASES: Dict[str, str] = {
@@ -56,7 +75,8 @@ FILTER_PHRASES: Dict[str, str] = {
 }
 FILTERS = list(FILTER_PHRASES)
 KIND_LABELS = {"grain": "노이즈", "motion": "흔들림", "lowres": "저해상도", "soft": "초점 흐림", "film": "필름",
-               "selfie": "폰 셀카", "nightselfie": "밤 셀카"}
+               "selfie": "폰 셀카", "nightselfie": "밤 셀카", "flash": "플래시", "lightleak": "빛샘",
+               "overexposed": "과다 노출", "harsh": "강한 대비", "hdr": "폰 HDR 과보정"}
 FILTER_LABELS = {"bw": "흑백", "warm": "따뜻한 톤", "cool": "차가운 톤", "faded": "빛바램", "vivid": "쨍한"}
 
 
@@ -198,8 +218,65 @@ def _nightselfie(im: Image.Image, rng) -> Image.Image:
     return _jpeg(out, int(rng.integers(60, 78)))
 
 
+def _radial(h: int, w: int, cx: float, cy: float) -> np.ndarray:
+    """Distance from (cx, cy) in image units, about 1 at the corners."""
+    y, x = np.ogrid[:h, :w]
+    return np.sqrt(((x / w - cx) / 0.75) ** 2 + ((y / h - cy) / 0.75) ** 2)
+
+
+def _flash(im: Image.Image, rng) -> Image.Image:
+    a = np.asarray(im).astype(np.float32) / 255
+    h, w = a.shape[:2]
+    d = _radial(h, w, 0.5 + rng.uniform(-0.05, 0.05), rng.uniform(0.35, 0.45))
+    a = a * np.clip(1.35 - 0.95 * d, 0.35, 1.35)[..., None]  # bright centre, falls off into the dark
+    a = 1 - (1 - np.clip(a, 0, 1)) ** 1.25                    # hot, flat highlights on the skin
+    a = (a - 0.5) * 1.12 + 0.5
+    a *= np.array([0.97, 1.0, 1.05], np.float32)             # cool flash white balance
+    return Image.fromarray(np.clip(a * 255, 0, 255).astype(np.uint8))
+
+
+def _lightleak(im: Image.Image, rng) -> Image.Image:
+    a = np.asarray(im).astype(np.float32) / 255
+    h, w = a.shape[:2]
+    side = int(rng.integers(4))
+    t = np.linspace(1, 0, w if side < 2 else h, dtype=np.float32) ** rng.uniform(1.8, 2.6)
+    t = t if side % 2 == 0 else t[::-1]
+    g = t[None, :, None] if side < 2 else t[:, None, None]
+    glow = np.array([1.0, rng.uniform(0.35, 0.55), 0.12], np.float32) * rng.uniform(0.55, 0.8)
+    a = 1 - (1 - a) * (1 - g * glow)                          # screen blend: light added, detail kept
+    return Image.fromarray(np.clip(a * 255, 0, 255).astype(np.uint8))
+
+
+def _overexposed(im: Image.Image, rng) -> Image.Image:
+    a = np.asarray(im).astype(np.float32) / 255
+    a = a * rng.uniform(1.35, 1.55) + 0.06                    # brighter, lifted shadows
+    g = a.mean(2, keepdims=True)
+    a = g + (a - g) * 0.8                                     # paler colour
+    return Image.fromarray(np.clip(a * 255, 0, 255).astype(np.uint8))
+
+
+def _harsh(im: Image.Image, rng) -> Image.Image:
+    a = np.asarray(im).astype(np.float32) / 255
+    a = 1 / (1 + np.exp(-(a - 0.5) * rng.uniform(7.5, 9.0)))  # S-curve: crushed shadows, bright highlights
+    a = (a - a.min()) / max(float(a.max() - a.min()), 1e-6)
+    out = Image.fromarray(np.clip(a * 255, 0, 255).astype(np.uint8))
+    return out.filter(ImageFilter.UnsharpMask(radius=1.2, percent=60, threshold=2))
+
+
+def _hdr(im: Image.Image, rng) -> Image.Image:
+    a = np.asarray(im).astype(np.float32) / 255
+    base = np.asarray(im.filter(ImageFilter.GaussianBlur(im.width * 0.012)), dtype=np.float32) / 255
+    a = a + (a - base) * rng.uniform(0.8, 1.1)               # local contrast boost (halos along edges)
+    a = 0.5 + (a - 0.5) * 0.9                                 # tone-mapped: shadows lifted, highlights held
+    g = a.mean(2, keepdims=True)
+    a = g + (a - g) * 1.15
+    out = Image.fromarray(np.clip(a * 255, 0, 255).astype(np.uint8))
+    return out.filter(ImageFilter.UnsharpMask(radius=1.5, percent=110, threshold=1))  # over-sharpened
+
+
 FUNCS = {"grain": _grain, "motion": _motion, "lowres": _lowres, "soft": _soft, "film": _film,
-         "selfie": _selfie, "nightselfie": _nightselfie}
+         "selfie": _selfie, "nightselfie": _nightselfie, "flash": _flash, "lightleak": _lightleak,
+         "overexposed": _overexposed, "harsh": _harsh, "hdr": _hdr}
 
 
 def _tone(im: Image.Image, f: str) -> Image.Image:
@@ -289,12 +366,14 @@ def make_copies(paths: List[str], caption_ext: str = ".txt") -> int:
     made = 0
     folder = os.path.dirname(paths[0]) if paths else ""
     have, have_f = coverage(os.listdir(folder) if folder and os.path.isdir(folder) else [])
+    max_blur = max(1, int(BLUR_SHARE * (sum(have.values()) + len(paths))))
     i = 0
     for p in paths:
         cap_path = os.path.splitext(p)[0] + caption_ext
         if not os.path.isfile(cap_path):
             continue
-        kind = min(KINDS, key=lambda k: (have[k], KINDS.index(k)))
+        blur_full = sum(have[k] for k in BLUR_KINDS) >= max_blur
+        kind = min(KINDS, key=lambda k: (have[k], blur_full and k in BLUR_KINDS, KINDS.index(k)))
         filt = min(FILTERS, key=lambda f: (have_f[f], FILTERS.index(f))) if i % 2 == 1 else None
         i += 1
         out = aug_path(p, kind + (f"-{filt}" if filt else ""))
@@ -311,3 +390,37 @@ def make_copies(paths: List[str], caption_ext: str = ".txt") -> int:
             have_f[filt] += 1
         made += 1
     return made
+
+def plan_rebalance(aug_names: List[str], target: int, cap: int):
+    """Which copies to retire and which effects to add so every effect appears at most once and the
+    softening ones stay within BLUR_SHARE. Keeps the dataset's copy count (at least ``target``, at
+    most ``cap``). Returns (retire: [names], add: [kinds])."""
+    total = min(max(target, len(aug_names)), cap)
+    max_blur = max(1, int(BLUR_SHARE * total))
+    by_kind = {}
+    for n in sorted(aug_names):
+        k = parse_kind(n)[0]
+        if k:
+            by_kind.setdefault(k, []).append(n)
+    keep, blur = [], 0
+    for k in KINDS:  # one copy per effect, in the interleaved order, softening ones up to the limit
+        if k in by_kind and len(keep) < total:
+            if k in BLUR_KINDS:
+                if blur >= max_blur:
+                    continue
+                blur += 1
+            keep.append(by_kind[k][0])
+    add = []
+    for k in KINDS:
+        if len(keep) + len(add) >= total:
+            break
+        if k in by_kind and by_kind[k][0] in keep:
+            continue
+        if k in BLUR_KINDS:
+            if blur >= max_blur:
+                continue
+            blur += 1
+        add.append(k)
+    retire = [n for n in aug_names if n not in keep]
+    return retire, add
+

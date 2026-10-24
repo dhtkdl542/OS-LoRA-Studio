@@ -288,8 +288,8 @@ class Trainer:
         self.rl.log(f"캐싱 완료 (새로 인코딩: 텍스트 {len(missing)}, 이미지 {len(todo)})")
 
     def _cache_photo(self):
-        """Photo-texture latents (tone + sensor noise at the training size) for every item but
-        the degraded copies; the VAE must be on the GPU."""
+        """Photo-texture latents (sensor noise at the training size) for every item but the
+        degraded copies; the VAE must be on the GPU."""
         from . import photoreal
 
         p = float(self.cfg.dataset.photo_texture or 0)
@@ -302,8 +302,8 @@ class Trainer:
                 new += 1
                 self.rl.set_status(message=f"사진 질감 버전 인코딩 {i + 1}/{len(textured)}")
             it.latent_photo = self.cache.get_latent(key)  # from the cache: CPU, like the clean latents
-        self.rl.log(f"사진 질감: {len(textured)}장에 '{photoreal.TONE}' 톤 + '{photoreal.NOISE}' 노이즈 버전을 만들어 "
-                    f"학습 step의 {p:.0%}에서 써요 (새로 인코딩 {new}장, 화질 변형 사본은 제외)")
+        self.rl.log(f"사진 질감: {len(textured)}장에 '{photoreal.NOISE}' 센서 노이즈만 입힌 버전을 만들어 "
+                    f"학습 step의 {p:.0%}에서 써요 (톤은 그대로, 새로 인코딩 {new}장, 화질 변형 사본은 제외)")
 
     # ------------------------------------------------------------------ model
     def build_model(self):
@@ -524,7 +524,9 @@ class Trainer:
             cfg.sample.every = int(o["sample_every"])
             done.append(f"샘플 {int(o['sample_every'])} step마다")
         if "photo_texture" in o:
-            p = 0.5 if o["photo_texture"] else 0.0
+            from . import photoreal
+
+            p = photoreal.RATE if o["photo_texture"] else 0.0
             if p != float(cfg.dataset.photo_texture or 0):
                 cfg.dataset.photo_texture = p
                 if p > 0:
