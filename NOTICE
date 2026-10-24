@@ -1,0 +1,22 @@
+OS LoRA Studio
+Copyright 2026 dhtkdl542
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes code adapted from the following projects:
+
+- MOSS-Image (OpenMOSS-Team), Apache License 2.0
+  oslora/models/moss/ is based on pipeline_moss_image.py.
+
+- Diffusers (The HuggingFace Team, Krea AI, Qwen-Image Team), Apache License 2.0
+  oslora/models/krea2/transformer.py is ported from transformer_krea2.py,
+  oslora/models/qwen21/transformer.py from transformer_qwenimage21.py, and the
+  Krea 2 / Qwen-Image 2.1 text encoding, latent handling and sampling schedules
+  follow the corresponding diffusers pipelines. The code was restructured
+  (checkpoint module names, int8 weights, LoRA layout, training paths).
+
+- ComfyUI-PhotoReal (SKFRMSEHF), MIT License
+  oslora/photoreal/ (see oslora/photoreal/LICENSE).
+
+Model weights, the InsightFace face-recognition model and other downloaded
+models are not part of this repository and are covered by their own licenses.

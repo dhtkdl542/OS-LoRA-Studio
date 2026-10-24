@@ -213,7 +213,7 @@ oslora/
 
 ## 라이선스
 
-이 저장소의 코드는 [MIT License](LICENSE)를 따라요.
+이 저장소의 코드는 [Apache License 2.0](LICENSE)을 따라요. 다른 프로젝트에서 가져온 코드의 출처는 [NOTICE](NOTICE)에 있어요.
 
 모델과 일부 구성 요소는 각자의 라이선스를 따르니, 쓰기 전에 확인하세요.
 
