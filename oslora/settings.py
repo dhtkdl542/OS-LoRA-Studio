@@ -101,10 +101,14 @@ QWEN21_FILES: Dict[str, Dict[str, str]] = {
         "size": "9.4 GB",
         "folder": "models/text_encoders",
     },
+    # the texture-fix finetune (madebyollin): same encoder output (exactly), a decoder without the
+    # official VAE's 2 px checkerboard (measured: grid energy 73x -> 4x its neighbourhood). The
+    # official qwen_image_2.1_vae_bf16 works too, samples just show the grid.
     "vae": {
-        "label": "VAE (Qwen Image 2.1)",
-        "file": "qwen_image_2.1_vae_bf16.safetensors",
-        "url": HF_QWEN21 + "vae/qwen_image_2.1_vae_bf16.safetensors",
+        "label": "VAE (Texture-Fix, Qwen Image 2.1)",
+        "file": "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors",
+        "url": "https://huggingface.co/madebyollin/texture-fix-vae-for-qwen-image-2.1/blob/main/"
+               "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors",
         "size": "0.7 GB",
         "folder": "models/vae",
     },

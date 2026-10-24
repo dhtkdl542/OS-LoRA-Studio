@@ -85,11 +85,12 @@ run.bat
 | DiT (기본 모델) | [qwen_image_2.1_int8_convrot.safetensors](https://huggingface.co/Comfy-Org/Qwen-Image-2.1/blob/main/diffusion_models/qwen_image_2.1_int8_convrot.safetensors) | 7.3 GB |
 | 샘플용 DiT (Turbo) | [qwen_image_2.1_turbo_int8_convrot.safetensors](https://huggingface.co/Comfy-Org/Qwen-Image-2.1/blob/main/diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors) | 7.3 GB |
 | 텍스트 인코더 (Qwen3-VL 8B) | [qwen3vl_8b_int8_convrot.safetensors](https://huggingface.co/Comfy-Org/Qwen-Image-2.1/blob/main/text_encoders/qwen3vl_8b_int8_convrot.safetensors) | 9.4 GB |
-| VAE | [qwen_image_2.1_vae_bf16.safetensors](https://huggingface.co/Comfy-Org/Qwen-Image-2.1/blob/main/vae/qwen_image_2.1_vae_bf16.safetensors) | 0.7 GB |
+| VAE | [texture_fix_vae_for_qwen_image_2.1_bf16.safetensors](https://huggingface.co/madebyollin/texture-fix-vae-for-qwen-image-2.1/blob/main/texture_fix_vae_for_qwen_image_2.1_bf16.safetensors) (권장) 또는 공식 [qwen_image_2.1_vae_bf16.safetensors](https://huggingface.co/Comfy-Org/Qwen-Image-2.1/blob/main/vae/qwen_image_2.1_vae_bf16.safetensors) | 0.7 GB |
 
 </details>
 
 - 같은 형식(int8 ConvRot)의 다른 재배포본·파생 모델(예: Turbo 머지)도 쓸 수 있어요.
+- Qwen Image 2.1은 Texture-Fix VAE를 권장해요. 인코딩 결과는 공식 VAE와 똑같고(학습에 영향 없음), 샘플에 생기는 잔 격자 무늬만 사라져요.
 - 샘플용 DiT를 비우면 샘플도 학습용 모델로 그려요.
 - 토크나이저·설정 파일(`models/<모델>/`)과 평가 모델(CLIP, 얼굴 인식 → `models/eval/`)은 처음 쓸 때 자동으로 받아요.
 
