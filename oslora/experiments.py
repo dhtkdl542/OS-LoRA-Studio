@@ -7,7 +7,7 @@ samples, cleaned up when done (only the final LoRA stays): ~30-55 min each on a 
 are per model and dataset, so the 2nd and 3rd plan on the same pair skip the encoding.
 
     venv\\Scripts\\python -m oslora.experiments plan D:\\data\\A D:\\data\\B [--models qwen21,krea2]
-    venv\\Scripts\\python -m oslora.experiments run        (stop: create experiments\\STOP; resumes later)
+    venv\\Scripts\\python -m oslora.experiments run [--hours 6.5]   (stop: experiments\\STOP; resumes later)
     venv\\Scripts\\python -m oslora.experiments status
 
 Plans: ``auto`` (the Autopilot), ``low`` / ``high`` (Autopilot off, cosine from 4e-5 / 1.5e-4).
@@ -41,6 +41,8 @@ PLANS = {
 }
 PROXY = {"resolution": 512, "max_steps": 600, "eval_every": 50, "quality_every": 150}
 CAPTION = {"model": "qwen38-27b-gguf", "style": "moss", "subject": "character"}
+DEFAULT_MINUTES = {"qwen21": 40, "krea2": 55, "moss_image": 35}  # until the queue has its own timings
+CAPTION_SEC = 25  # per image, Qwen3.8 27B on a 5060 Ti
 
 
 def _read(path, default):
@@ -157,15 +159,30 @@ def prepare_dataset(folder: str, log=print) -> bool:
     return True
 
 
-def run(log=print) -> None:
+def estimate_minutes(item: Dict, q: Dict) -> float:
+    """Expected length of one queued experiment: the model's average so far (or a default), plus
+    the captioning if its folder has no captions yet."""
+    done = [it["minutes"] for it in q["items"] if it.get("minutes") and it["model"] == item["model"]
+            and it["state"] == "done"]
+    m = sum(done) / len(done) if done else DEFAULT_MINUTES.get(item["model"], 45)
+    if captioned(item["folder"]) == 0:
+        from .data import scan_folder
+
+        m += len(scan_folder(item["folder"], ".txt")) * CAPTION_SEC / 60
+    return m
+
+
+def run(log=print, hours: float = 0) -> None:
     """Work through the queue, one training at a time. STOP (file) ends after the current run;
-    a run that failed is marked and skipped, so one bad dataset can't block the night."""
+    a run that failed is marked and skipped, so one bad dataset can't block the night. With
+    ``hours``, an experiment that wouldn't finish within that budget is not started."""
     from .config import save_config
 
     os.makedirs(EXP_DIR, exist_ok=True)
     if os.path.exists(LOCK) and time.time() - os.path.getmtime(LOCK) < 6 * 3600:
         raise SystemExit("실험이 이미 실행 중이에요 (experiments/running.lock)")
     open(LOCK, "w").close()
+    t_start = time.time()
     try:
         while True:
             if os.path.exists(STOP):
@@ -177,6 +194,13 @@ def run(log=print) -> None:
             if item is None:
                 log("[실험] 큐가 비었어요")
                 return
+            if hours:
+                need = estimate_minutes(item, q)
+                used = (time.time() - t_start) / 60
+                if used + need > hours * 60:
+                    log(f"[실험] 시간 예산 {hours}시간: 다음 실험({item['name']}, 약 {need:.0f}분)은 "
+                        f"남은 {hours * 60 - used:.0f}분 안에 못 끝나서 여기서 멈춰요")
+                    return
             if ui_training():
                 log("[실험] 화면에서 시작한 학습이 끝날 때까지 기다려요")
                 while ui_training() and not os.path.exists(STOP):
@@ -227,8 +251,15 @@ def status() -> Dict:
     for it in done:
         per.setdefault(it["model"], []).append(it["minutes"])
     left = [it for it in q["items"] if it["state"] == "queued"]
-    est = sum(sum(per.get(it["model"], [45])) / len(per.get(it["model"], [45])) for it in left)
-    return {"counts": by, "remaining_hours": round(est / 60, 1), "next": [it["name"] for it in left[:5]]}
+    est = sum(estimate_minutes(it, q) for it in left)
+    # what one 6.5-hour night would get through, in queue order
+    night, t = [], 0.0
+    for it in left:
+        t += estimate_minutes(it, q)
+        if t > 6.5 * 60:
+            break
+        night.append(it["name"])
+    return {"counts": by, "remaining_hours": round(est / 60, 1), "next_night_6_5h": night}
 
 
 def main():
@@ -238,7 +269,8 @@ def main():
     p.add_argument("folders", nargs="+")
     p.add_argument("--models", default=",".join(MODELS))
     p.add_argument("--plans", default=",".join(PLANS))
-    sub.add_parser("run")
+    r = sub.add_parser("run")
+    r.add_argument("--hours", type=float, default=0, help="time budget: don't start what wouldn't finish in it")
     sub.add_parser("status")
     a = ap.parse_args()
     if a.cmd == "plan":
@@ -248,7 +280,7 @@ def main():
             print(f"  건너뜀: {f} ({why})")
         print(json.dumps(status(), ensure_ascii=False, indent=1))
     elif a.cmd == "run":
-        run()
+        run(hours=a.hours)
     else:
         print(json.dumps(status(), ensure_ascii=False, indent=1))
 
