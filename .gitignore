@@ -7,3 +7,4 @@ __pycache__/
 *.safetensors
 settings.json
 settings.json.tmp
+/history/

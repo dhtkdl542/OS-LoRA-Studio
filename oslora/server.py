@@ -1197,6 +1197,16 @@ def main():
     load_queue()
     threading.Thread(target=_queue_worker, daemon=True).start()
     os.makedirs(OUTPUT, exist_ok=True)
+
+    def _history():  # keep the training history DB up to date with every run folder
+        try:
+            from . import rundb
+
+            rundb.ingest_all(OUTPUT)
+        except Exception as e:
+            console(f"[기록] 학습 기록 DB 갱신 실패: {e}")
+
+    threading.Thread(target=_history, daemon=True).start()
     port = int(os.environ.get("OSLORA_PORT", "7870"))
     console("=" * 64)
     console(f" OS LoRA Studio 실행 중  →  http://127.0.0.1:{port}")

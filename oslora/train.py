@@ -1101,6 +1101,9 @@ class Trainer:
             self.rl.set_status(phase="starting", message="준비 중" if resume_step is None else f"step {resume_step}부터 이어서 학습 준비")
             self.resuming = resume_step is not None
             self.prepare_data()
+            from . import rundb
+
+            rundb.safe_ingest(self.run_dir, self.rl.log)  # the dataset as it is now
             self.cache_everything()
             self.build_model()
             self.build_probes()
@@ -1110,6 +1113,9 @@ class Trainer:
             self.rl.set_status(phase="error", message=str(e))
             raise
         finally:
+            from . import rundb
+
+            rundb.safe_ingest(self.run_dir, self.rl.log)  # curves and outcome, also of failed / stopped runs
             self.release_memory()
 
     def release_memory(self):

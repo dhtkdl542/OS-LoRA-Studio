@@ -41,6 +41,10 @@ from dataclasses import dataclass
 from statistics import median
 from typing import Dict, List, Optional
 
+# bumped whenever the decision rules change (recorded with every run in the history DB)
+# 2: stall brake on val standing still + leak growing, new-best margin
+AUTOPILOT_VERSION = 2
+
 
 @dataclass
 class AutopilotConfig:
