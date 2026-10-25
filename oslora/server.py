@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 from collections import OrderedDict
 from typing import Dict, List, Optional
@@ -578,6 +579,16 @@ def llama_cancel():
     return {"ok": True}
 
 
+def experiments_running() -> bool:
+    """The overnight proxy experiments (python -m oslora.experiments run) hold the GPU."""
+    from .experiments import LOCK
+
+    return os.path.exists(LOCK) and time.time() - os.path.getmtime(LOCK) < 6 * 3600
+
+
+EXPERIMENTS_BUSY = "밤샘 실험(python -m oslora.experiments)이 GPU를 쓰는 중이에요. experiments 폴더에 STOP 파일을 만들면 지금 실험이 끝난 뒤 멈춰요."
+
+
 @app.post("/api/caption/start")
 def caption_start(req: CaptionStart):
     folder = req.folder.strip().strip('"')
@@ -587,6 +598,8 @@ def caption_start(req: CaptionStart):
         raise HTTPException(409, "캡션 작업이 이미 실행 중입니다.")
     if running("train"):
         raise HTTPException(409, "학습 중에는 VRAM이 부족해 캡션을 만들 수 없습니다. 학습이 끝난 뒤 실행하세요.")
+    if experiments_running():
+        raise HTTPException(409, EXPERIMENTS_BUSY)
     if running("compare"):
         raise HTTPException(409, "체크포인트 비교가 끝난 뒤 캡션을 만드세요.")
     spec = CAPTION_MODELS.get(req.model, {})
@@ -701,7 +714,7 @@ def _queue_worker():
     while True:
         time.sleep(5)
         try:
-            if running("train") or running("caption") or running("compare"):
+            if running("train") or running("caption") or running("compare") or experiments_running():
                 continue
             last = QUEUE.get("last")
             if last:
@@ -790,6 +803,8 @@ def train_start(req: TrainReq):
         if not req.queue:
             what = f"'{STATE['train_run']}' 학습" if running("train") else ("캡션 작업" if running("caption") else "체크포인트 비교")
             raise HTTPException(409, f"{what}이 실행 중입니다. 끝나거나 중지한 뒤 시작하세요.")
+    elif experiments_running():
+        raise HTTPException(409, EXPERIMENTS_BUSY + " 대기열에 넣으면 실험이 끝난 뒤 시작해요.")
         entry = req.dict()
         entry["queue"] = False
         QUEUE["items"].append(entry)
@@ -884,6 +899,8 @@ def train_continue(req: ContinueReq):
 
     if running("train"):
         raise HTTPException(409, f"'{STATE['train_run']}' 학습이 실행 중입니다. 끝나거나 중지한 뒤 이어서 학습하세요.")
+    if experiments_running():
+        raise HTTPException(409, EXPERIMENTS_BUSY)
     if running("caption"):
         raise HTTPException(409, "캡션 작업이 끝난 뒤 이어서 학습하세요.")
     if running("compare"):
