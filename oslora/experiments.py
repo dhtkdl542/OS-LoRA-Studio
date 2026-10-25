@@ -11,6 +11,10 @@ are per model and dataset, so the 2nd and 3rd plan on the same pair skip the enc
     venv\\Scripts\\python -m oslora.experiments status
 
 Plans: ``auto`` (the Autopilot), ``low`` / ``high`` (Autopilot off, cosine from 4e-5 / 1.5e-4).
+
+A dataset without captions gets them right before its first run (3 lengths, character mode, the
+default caption model), and its check-up report for the dataset statistics. While a training
+started from the UI is running, the queue waits.
 """
 
 import argparse
@@ -36,6 +40,7 @@ PLANS = {
     "high": {"autopilot": False, "lr": 1.5e-4},
 }
 PROXY = {"resolution": 512, "max_steps": 600, "eval_every": 50, "quality_every": 150}
+CAPTION = {"model": "qwen38-27b-gguf", "style": "moss", "subject": "character"}
 
 
 def _read(path, default):
@@ -66,7 +71,8 @@ def run_name(folder: str, model: str, plan: str) -> str:
 
 def plan(folders: List[str], models=MODELS, plans=tuple(PLANS)) -> Dict:
     """Add every (dataset, model, plan) to the queue, autopilot runs of all datasets first (the
-    most useful data early), then the fixed-LR contrasts. Folders without captions are reported."""
+    most useful data early), then the fixed-LR contrasts. Folders without captions get them when
+    their first run comes up."""
     q = _read(QUEUE, {"items": []})
     have = {it["name"] for it in q["items"]}
     skipped = []
@@ -75,9 +81,6 @@ def plan(folders: List[str], models=MODELS, plans=tuple(PLANS)) -> Dict:
         f = os.path.normpath(f.strip().strip('"'))
         if not os.path.isdir(f):
             skipped.append((f, "폴더 없음"))
-            continue
-        if captioned(f) == 0:
-            skipped.append((f, "캡션 없음"))
             continue
         name = run_name(f, m, p)
         if name not in have:
@@ -122,6 +125,38 @@ def _env():
     return env
 
 
+def ui_training() -> bool:
+    """A training started from the UI (output/<run>/status.json updated in the last 3 minutes)."""
+    for st in glob.glob(os.path.join(ROOT, "output", "*", "status.json")):
+        s = _read(st, {})
+        if s.get("phase") in ("starting", "caching", "training", "sampling", "paused") and \
+                time.time() - os.path.getmtime(st) < 180:
+            return True
+    return False
+
+
+def prepare_dataset(folder: str, log=print) -> bool:
+    """Captions (if the folder has none) and the check-up report; False if captioning failed."""
+    if captioned(folder) == 0:
+        log(f"[실험] 캡션 만들기: {folder}")
+        status = os.path.join(EXP_DIR, "caption_status.json")
+        with open(os.path.join(EXP_DIR, "caption_log.txt"), "a", encoding="utf-8") as out:
+            code = subprocess.call([sys.executable, "-m", "oslora.caption", "--folder", folder,
+                                    "--model", CAPTION["model"], "--style", CAPTION["style"],
+                                    "--subject", CAPTION["subject"], "--status", status],
+                                   cwd=ROOT, stdout=out, stderr=subprocess.STDOUT, env=_env())
+        if code != 0 or captioned(folder) == 0:
+            log(f"[실험] 캡션 실패: {folder} (experiments/caption_log.txt)")
+            return False
+    try:
+        from . import diagnose
+
+        diagnose.analyze(folder, PROXY["resolution"])
+    except Exception as e:
+        log(f"[실험] 진단 실패 (실험은 계속): {folder}: {e}")
+    return True
+
+
 def run(log=print) -> None:
     """Work through the queue, one training at a time. STOP (file) ends after the current run;
     a run that failed is marked and skipped, so one bad dataset can't block the night."""
@@ -142,6 +177,20 @@ def run(log=print) -> None:
             if item is None:
                 log("[실험] 큐가 비었어요")
                 return
+            if ui_training():
+                log("[실험] 화면에서 시작한 학습이 끝날 때까지 기다려요")
+                while ui_training() and not os.path.exists(STOP):
+                    os.utime(LOCK)
+                    time.sleep(60)
+                continue
+            if not prepare_dataset(item["folder"], log):
+                q = _read(QUEUE, {"items": []})
+                for it in q["items"]:  # every run on this folder needs the captions
+                    if it["folder"] == item["folder"] and it["state"] == "queued":
+                        it["state"] = "failed"
+                _write(QUEUE, q)
+                continue
+            os.utime(LOCK)
             run_dir = os.path.join(EXP_DIR, item["name"])
             os.makedirs(run_dir, exist_ok=True)
             cfg_path = os.path.join(run_dir, "config.yaml")
