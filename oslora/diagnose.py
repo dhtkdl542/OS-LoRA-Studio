@@ -370,6 +370,11 @@ def _findings(items: List[Dict], resolution: int) -> List[Dict]:
             "흐린 것을 섞되, 흐린 것은 3분의 1 정도만 써요. 두 장에 한 장은 흑백·따뜻한 톤·차가운 톤·빛바램·쨍한 필터도 함께 "
             "걸고, 캡션 맨 앞에 어떤 효과인지 적어요 (원본은 그대로).",
             [it["path"] for it in best], "augment", f"화질 변형 {len(best)}장 만들기")
+    elif want > 0 and any("face" in it and it["name"] not in used for it in originals):
+        # the copies reuse the original's caption (effect sentences + caption): nothing to offer yet
+        add("augment", "info", "캡션을 만들면 화질 변형 사본을 더할 수 있어요",
+            f"변형 사본은 원본 캡션 앞에 효과를 적어서 만들어요. 캡션이 있는 원본이 없어서 아직 만들 수 없어요. "
+            f"자동 캡션이 끝나면 진단이 다시 돌면서 변형 사본 {want}장 정도를 제안해요.", [])
 
     if not out:
         add("ok", "ok", "문제 없어 보여요", f"이미지 {len(ok)}장 모두 확인했어요.", [])
