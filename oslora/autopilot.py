@@ -25,8 +25,9 @@ So the controller
   * on instability (non-finite loss, grad-norm or loss spike) rolls back to the last healthy
     snapshot and halves the LR;
   * uses val as a *brake*: when its 3-eval mean drifts above its best, or the training images
-    keep improving while val stands still, the LR is cut (x0.8). That is not an overfitting
-    strike;
+    keep improving while val stands still (3 evals without a real new best, the leak growing
+    meanwhile), the LR is cut (x0.8) and the next stretch is watched from there. That is not
+    an overfitting strike, and the LR can come back up once val improves again;
   * counts an overfitting *strike* (LR x0.6, final anneal pulled forward; ``patience``
     strikes stop the run) only on firm evidence: the quality judges confirm degradation
     (prompts no longer followed, copying the training images, collapse), val loses half of
@@ -57,7 +58,10 @@ class AutopilotConfig:
     val_window: int = 3  # val is judged on the mean of the last N evals (noise filter)
     brake_rise: float = 0.15  # val mean above its best by this fraction of its gain -> brake
     gap_frac: float = 0.1  # fit gain since val's best (fraction of the gain then) -> brake
-    gap_stale: int = 3  # ...once val has made no new best for this many evals
+    gap_stale: int = 3  # val without a new best for this many evals while fit improves and leak grows -> brake
+    val_eps: float = 0.005  # a new val best must beat the old one by this fraction of val's gain
+    stale_leak: float = 0.05  # ...the stall brake needs the leak up by this much over the stretch
+    stale_floor: float = 0.5  # ...and never takes the LR below this fraction of the start LR
     val_collapse: float = 0.5  # val gave back this fraction of its gain -> strike
     keep_frac: float = 0.25  # recommendation: val may have given back at most this much
     leak_growth: float = 0.25  # leak growth over two windows that counts during a plateau
@@ -97,6 +101,7 @@ class Autopilot:
         self.best_val = float("inf")  # best running mean
         self.val_stale = 0  # evals since the running mean made a new best
         self.fit_at_val_best: Optional[float] = None
+        self.leak_at_val_best: Optional[float] = None
         self.brake_cool = 0
         self.best_score = float("inf")
         self.best_step = 0
@@ -279,9 +284,13 @@ class Autopilot:
             window = self.val_hist[-cfg.val_window:]
             val_mean = sum(window) / len(window)
             b0 = self.baseline["val"]
-            if val_mean < self.best_val:
+            # a new best has to be a real step down, not noise-level creep (which would keep
+            # resetting the stale count while the training images run away)
+            eps = cfg.val_eps * max(b0 - self.best_val, 0.0) if math.isfinite(self.best_val) else 0.0
+            if val_mean < self.best_val - eps:
                 self.best_val = val_mean
                 self.fit_at_val_best = fit
+                self.leak_at_val_best = leak
                 self.val_stale = 0
                 if self.val_strikes > 0:  # recovered: forgive an earlier collapse strike
                     self.val_strikes -= 1
@@ -307,9 +316,17 @@ class Autopilot:
                     self.val_strikes += 1
                 elif self.brake_cool == 0 and given_back > cfg.brake_rise:
                     brake_why = f"홀드아웃 평균이 최저점보다 상승 (개선분의 {given_back:.0%})"
-                elif self.brake_cool == 0 and self.val_stale >= cfg.gap_stale and gap > cfg.gap_frac * gain_at_best:
-                    brake_why = f"학습 이미지만 좋아지고 홀드아웃은 {self.val_stale}회째 제자리"
-                    self.fit_at_val_best = fit  # measure the next gap from here
+                elif self.brake_cool == 0 and self.val_stale >= cfg.gap_stale and (
+                        gap > cfg.gap_frac * gain_at_best
+                        # late in a run the fit curve is flat, so a share of the early gain takes
+                        # forever: the training images still improving + the leak growing while val
+                        # stands still is memorising, whatever the size of the gap
+                        or (gap > 0 and leak > (self.leak_at_val_best or 0.0) * (1 + cfg.stale_leak)
+                            and self.base_lr > cfg.stale_floor * (cfg.start_lr or self.base_lr) * 1.001)):
+                    brake_why = (f"학습 이미지만 좋아지고 홀드아웃은 {self.val_stale}회째 제자리"
+                                 + (f", 누출 +{leak / self.leak_at_val_best - 1:.0%}" if self.leak_at_val_best else ""))
+                    self.fit_at_val_best, self.leak_at_val_best = fit, leak  # measure the next stretch from here
+                    self.val_stale = 0
             elif val is None and settled and len(self.history) >= 4 and step >= cfg.min_steps_frac * self.max_steps:
                 # no holdout: leak growing through a sustained plateau is the best proxy
                 leak_2ago = self.history[-2]["leak"]
