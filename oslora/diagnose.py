@@ -32,7 +32,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE = os.path.join(ROOT, "cache", "diagnosis")
 EXCLUDED = "excluded"
 REASON_DIRS = {"look": "다른사람같음", "duplicate": "중복", "blurry": "흐림", "crop": "크롭과다", "aug": "변형과다",
-               "aug_rebalance": "변형정리"}
+               "aug_rebalance": "변형정리", "recrop": "크롭정리"}
 REPORT_VERSION = 3  # 2: face crops paired with their originals, 3: augmented copies
 
 
@@ -320,6 +320,17 @@ def _findings(items: List[Dict], resolution: int) -> List[Dict]:
                 "얼굴이 이미 잘 보이는 데이터라 꼭 필요하진 않지만, 눈·입 같은 디테일을 더 또렷하게 배워요. " + why,
                 files, "facecrop", f"얼굴 클로즈업 {len(best)}장 만들기")
 
+    # crops made with the old hair-to-collarbone framing: the face is a third of the picture, which
+    # barely zooms in on a large source; offer to cut them again as close-ups
+    loose = [it for it in crops if "face" in it and it["face"]["box"][3] / it["h"] < LOOSE_CROP
+             and "face" in by_name.get(it.get("source", ""), {}) and _face_crop_box(by_name[it["source"]]) is not None]
+    if loose:
+        add("recrop", "info", f"얼굴 크롭 {len(loose)}장이 느슨해요",
+            "얼굴이 크롭의 3분의 1 정도라 머리부터 쇄골까지 담겨서, 큰 사진에서는 거의 확대가 안 돼요. 원본에서 얼굴이 "
+            "크롭의 절반쯤 차도록(앞머리부터 턱 아래까지) 다시 잘라요. 지금 크롭은 excluded/크롭정리 폴더로 옮기고"
+            "(지우지 않아요), 새 크롭은 캡션이 없으니 자동 캡션을 한 번 돌려주세요.",
+            [it["path"] for it in loose], "recrop", f"크롭 {len(loose)}장 다시 자르기")
+
     # degraded copies: a clean dataset makes the LoRA scrub grain / blur / phone looks from
     # prompts; a few copies captioned with their degradation tie that look to words instead
     aug_target = _aug_target(len(originals))
@@ -386,17 +397,26 @@ def _crop_path(path: str) -> str:
     return os.path.join(d, "FaceCrop_" + os.path.splitext(n)[0] + ".png")
 
 
+# face crops frame the face like a close-up (the user's hand-made crops): the detected face fills
+# about 60 % of the crop (padding 0.3 -> a box 1.6x the face). Looser framings only when the source
+# is too small for the crop to reach 768 px (then 512 px), so it isn't blown up much in training.
+CROP_PADDINGS = (0.3, 0.45, 0.65, 0.9)
+CROP_MIN_SIDES = (768, 512)
+LOOSE_CROP = 0.5  # a crop whose face is under this share of its height was framed the old, loose way
+
+
 def _face_crop_box(it: Dict):
-    """A crop worth making: hair-to-neck framing (padding 0.9) if that actually zooms in
-    (box <= 80% of the short side), else a tighter face framing (0.6); None if neither does."""
-    for padding in (0.9, 0.6):
-        box = _crop_box(it, padding)
-        if box is not None and (box[2] - box[0]) <= 0.8 * min(it["w"], it["h"]):
-            return box
+    """A crop worth making: the tightest framing in CROP_PADDINGS that reaches the larger minimum
+    size (then the smaller one) and actually zooms in (box <= 80% of the short side)."""
+    for min_side in CROP_MIN_SIDES:
+        for padding in CROP_PADDINGS:
+            box = _crop_box(it, padding, min_side)
+            if box is not None and (box[2] - box[0]) <= 0.8 * min(it["w"], it["h"]):
+                return box
     return None
 
 
-def _crop_box(it: Dict, padding: float = 0.9, min_side: int = 512):
+def _crop_box(it: Dict, padding: float = 0.5, min_side: int = 512):
     """Square box around the face (+padding for hair/neck), inside the image; None if the
     crop would be too small to be useful."""
     x, y, w, h = it["face"]["box"]
@@ -404,10 +424,27 @@ def _crop_box(it: Dict, padding: float = 0.9, min_side: int = 512):
     side = min(side, it["w"], it["h"])
     if side < min_side:
         return None
-    cx, cy = x + w / 2, y + h / 2 + h * 0.1  # a little below centre: include chin/neck
+    # close framings sit the face a little low (fringe and hair above, chin near the bottom);
+    # loose ones a little high (chin and neck included)
+    cx, cy = x + w / 2, y + h / 2 + h * (0.1 if padding >= 0.8 else -0.08)
     left = min(max(cx - side / 2, 0), it["w"] - side)
     top = min(max(cy - side / 2, 0), it["h"] - side)
     return int(left), int(top), int(left + side), int(top + side)
+
+
+def _write_crop(it: Dict) -> bool:
+    """Cut the close-up of an analysed original next to it (``FaceCrop_<stem>.png``, at most
+    1024 px); False if there is no worthwhile box or the file exists."""
+    box = _face_crop_box(it)
+    out = _crop_path(it["path"])
+    if box is None or os.path.isfile(out):
+        return False
+    with Image.open(it["path"]) as im:
+        crop = ImageOps.exif_transpose(im).convert("RGB").crop(box)
+    if crop.width > 1024:
+        crop = crop.resize((1024, 1024), Image.LANCZOS)
+    crop.save(out)
+    return True
 
 
 def _move_with_captions(path: str, dst_dir: str):
@@ -442,24 +479,28 @@ def fix(folder: str, action: str, files: List[str]) -> Dict:
         refresh_captions(folder)  # the kept copies get captions without the original's finish statements
         return {"done": len(retire) + made,
                 "message": f"변형 사본 {len(retire)}장을 '{EXCLUDED}/{REASON_DIRS['aug_rebalance']}'로 옮기고 새 효과 {made}장을 만들었어요"}
+    if action == "recrop":
+        report = analyze(folder)
+        by_name = {it["name"]: it for it in report["items"]}
+        dst_dir = os.path.join(folder, EXCLUDED, REASON_DIRS["recrop"])
+        os.makedirs(dst_dir, exist_ok=True)
+        made = 0
+        for p in paths:
+            src = by_name.get(by_name.get(os.path.basename(p), {}).get("source", ""))
+            if not src or "face" not in src or _face_crop_box(src) is None:
+                continue
+            _move_with_captions(p, dst_dir)
+            made += _write_crop(src)
+        return {"done": made, "message": f"얼굴 크롭 {made}장을 클로즈업으로 다시 잘랐어요 (예전 크롭은 '{EXCLUDED}/{REASON_DIRS['recrop']}'). "
+                                         "캡션이 없으니 '캡션 없는 이미지'를 자동 캡션하세요"}
     if action == "facecrop":
         report = analyze(folder)
         by_name = {it["name"]: it for it in report["items"]}
         made = 0
         for p in paths:
             it = by_name.get(os.path.basename(p))
-            if not it or "face" not in it:
-                continue
-            box = _face_crop_box(it)
-            out = _crop_path(p)
-            if box is None or os.path.isfile(out):
-                continue
-            with Image.open(p) as im:
-                crop = ImageOps.exif_transpose(im).convert("RGB").crop(box)
-                if crop.width > 1024:
-                    crop = crop.resize((1024, 1024), Image.LANCZOS)
-                crop.save(out)
-            made += 1
+            if it and "face" in it:
+                made += _write_crop(it)
         return {"done": made, "message": f"얼굴 클로즈업 {made}장을 만들었어요. 캡션이 없으니 '캡션 없는 이미지'를 자동 캡션하세요"}
     if action == "augment":
         from .augment import make_copies
