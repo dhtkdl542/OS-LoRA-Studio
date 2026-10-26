@@ -46,6 +46,9 @@ PLANS = {
 }
 PROXY = {"resolution": 512, "max_steps": 1500, "eval_every": 100, "quality_every": 300}
 CAPTION = {"model": "qwen38-27b-gguf", "style": "moss", "subject": "character"}
+# photo texture of every proxy run, fixed so all of them train the same way: the recipe of the
+# first runs (noise only, a quarter of the steps), not whatever the UI default is at the time
+EXP_PHOTO = {"rate": 0.25, "tone": False}
 DEFAULT_MINUTES = {"qwen21": 40, "krea2": 55, "moss_image": 35}  # per 600 steps, until the queue has its own timings
 CAPTION_SEC = 25  # per image, Qwen3.8 27B on a 5060 Ti
 
@@ -115,9 +118,7 @@ def make_config(item: Dict):
     p = PLANS[item["plan"]]
     cfg.dataset.folder = item["folder"]
     cfg.dataset.resolution = PROXY["resolution"]
-    from . import photoreal
-
-    cfg.dataset.photo_texture = photoreal.RATE
+    cfg.dataset.photo_texture, cfg.dataset.photo_tone = EXP_PHOTO["rate"], EXP_PHOTO["tone"]
     steps = item.get("steps", 600)
     cfg.train.max_steps = steps
     cfg.train.lr = p["lr"]

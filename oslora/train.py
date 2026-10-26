@@ -293,17 +293,20 @@ class Trainer:
         from . import photoreal
 
         p = float(self.cfg.dataset.photo_texture or 0)
+        tone = bool(self.cfg.dataset.photo_tone)
         textured = [it for it in self.items + self.extra_items if not os.path.basename(it.image).startswith(AUG_PREFIX)]
         new = 0
         for i, it in enumerate(textured):
-            key = file_key(it.image, f"{it.bucket[0]}x{it.bucket[1]}|photo{photoreal.VERSION}")
+            key = file_key(it.image, f"{it.bucket[0]}x{it.bucket[1]}|{photoreal.cache_tag(tone)}")
             if self.cache.get_latent(key) is None:
-                self.cache.put_latent(key, self.vae.encode(load_image(it.image, it.bucket, photo=True)[None])[0])
+                img = load_image(it.image, it.bucket, photo=True, tone=tone)
+                self.cache.put_latent(key, self.vae.encode(img[None])[0])
                 new += 1
                 self.rl.set_status(message=f"사진 질감 버전 인코딩 {i + 1}/{len(textured)}")
             it.latent_photo = self.cache.get_latent(key)  # from the cache: CPU, like the clean latents
-        self.rl.log(f"사진 질감: {len(textured)}장에 '{photoreal.NOISE}' 센서 노이즈만 입힌 버전을 만들어 "
-                    f"학습 step의 {p:.0%}에서 써요 (톤은 그대로, 새로 인코딩 {new}장, 화질 변형 사본은 제외)")
+        look = f"'{photoreal.TONE}' 톤과 '{photoreal.NOISE}' 센서 노이즈를" if tone else f"'{photoreal.NOISE}' 센서 노이즈만"
+        self.rl.log(f"사진 질감: {len(textured)}장에 {look} 입힌 버전을 만들어 학습 step의 {p:.0%}에서 써요 "
+                    f"(새로 인코딩 {new}장, 화질 변형 사본은 제외)")
 
     # ------------------------------------------------------------------ model
     def build_model(self):
@@ -529,6 +532,7 @@ class Trainer:
             p = photoreal.RATE if o["photo_texture"] else 0.0
             if p != float(cfg.dataset.photo_texture or 0):
                 cfg.dataset.photo_texture = p
+                cfg.dataset.photo_tone = p > 0  # the UI's recipe
                 if p > 0:
                     self.vae.to(self.device)
                     self._cache_photo()

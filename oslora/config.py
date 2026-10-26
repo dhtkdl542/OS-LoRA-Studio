@@ -103,6 +103,9 @@ class DatasetConfig:
     # share of steps that see the image with a real photo's finish ("natural photo" tone + phone
     # sensor noise) instead of the spotless original; 0 = off. Augmented copies are left alone.
     photo_texture: float = 0.0
+    # the photo texture includes the "natural photo" tone (off: sensor noise only, the recipe of
+    # configs written before this option)
+    photo_tone: bool = False
     # extra training resolutions (e.g. [512, 768]): every training image is also learned at these
     # sizes, sampled evenly with the main one; probes, holdout and quality stay at ``resolution``
     multires: List[int] = field(default_factory=list)

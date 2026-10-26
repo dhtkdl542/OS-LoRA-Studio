@@ -64,7 +64,7 @@ def bucket_for(width: int, height: int, resolution: int, step: int = 16, max_rat
     return bw, bh
 
 
-def load_image(path: str, size: Tuple[int, int], photo: bool = False) -> torch.Tensor:
+def load_image(path: str, size: Tuple[int, int], photo: bool = False, tone: bool = False) -> torch.Tensor:
     """Cover-resize + center-crop to ``size``; returns (3, H, W) in [-1, 1]. ``photo`` adds the
     photo texture (tone + phone sensor noise) at the training size."""
     img = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
@@ -77,7 +77,7 @@ def load_image(path: str, size: Tuple[int, int], photo: bool = False) -> torch.T
     if photo:
         from . import photoreal
 
-        img = photoreal.apply(img, os.path.basename(path))
+        img = photoreal.apply(img, os.path.basename(path), tone)
     t = torch.from_numpy(__import__("numpy").asarray(img).copy()).permute(2, 0, 1).float()
     return t / 127.5 - 1.0
 
