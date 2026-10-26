@@ -71,6 +71,13 @@ def captioned(folder: str) -> int:
     return sum(1 for _, cap in scan_folder(folder, ".txt") if cap)
 
 
+def uncaptioned(folder: str) -> int:
+    """Images still without a caption (a captioning that was cut short leaves some)."""
+    from .data import scan_folder
+
+    return sum(1 for _, cap in scan_folder(folder, ".txt") if not cap)
+
+
 def run_name(folder: str, model: str, plan: str, steps: int = PROXY["max_steps"]) -> str:
     return f"EXP_{os.path.basename(os.path.normpath(folder))}_{model}_{plan}_{steps}"
 
@@ -146,9 +153,10 @@ def ui_training() -> bool:
 
 
 def prepare_dataset(folder: str, log=print) -> bool:
-    """Captions (if the folder has none) and the check-up report; False if captioning failed."""
-    if captioned(folder) == 0:
-        log(f"[실험] 캡션 만들기: {folder}")
+    """Captions for the images that have none (existing ones are kept) and the check-up report;
+    False if captioning failed."""
+    if uncaptioned(folder):
+        log(f"[실험] 캡션 만들기: {folder} ({uncaptioned(folder)}장)")
         status = os.path.join(EXP_DIR, "caption_status.json")
         with open(os.path.join(EXP_DIR, "caption_log.txt"), "a", encoding="utf-8") as out:
             code = subprocess.call([sys.executable, "-m", "oslora.caption", "--folder", folder,
@@ -169,16 +177,12 @@ def prepare_dataset(folder: str, log=print) -> bool:
 
 def estimate_minutes(item: Dict, q: Dict) -> float:
     """Expected length of one queued experiment: the average of done runs of the same model and
-    length (or a default), plus the captioning if its folder has no captions yet."""
+    length (or a default), plus the captioning of its images that have none yet."""
     steps = item.get("steps", 600)
     done = [it["minutes"] for it in q["items"] if it.get("minutes") and it["model"] == item["model"]
             and it.get("steps", 600) == steps and it["state"] == "done"]
     m = sum(done) / len(done) if done else DEFAULT_MINUTES.get(item["model"], 45) * steps / 600
-    if captioned(item["folder"]) == 0:
-        from .data import scan_folder
-
-        m += len(scan_folder(item["folder"], ".txt")) * CAPTION_SEC / 60
-    return m
+    return m + uncaptioned(item["folder"]) * CAPTION_SEC / 60
 
 
 def run(log=print, hours: float = 0) -> None:
