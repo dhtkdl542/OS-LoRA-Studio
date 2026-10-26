@@ -229,6 +229,18 @@ def prepare_dataset(folder: str, log=print) -> bool:
     return True
 
 
+def drop_weights(run_dir: str) -> None:
+    """An experiment keeps numbers only (log, metrics, config; the curves are in the DB): the LoRA
+    files, the resume state (it holds the LoRA too) and the renders go, finished or not. Some
+    datasets are of real people -- nothing that can draw them may stay behind."""
+    import shutil
+
+    for f in glob.glob(os.path.join(run_dir, "*.safetensors")):
+        os.remove(f)
+    for sub in ("checkpoints", "samples"):  # samples/ also holds the quality-check renders
+        shutil.rmtree(os.path.join(run_dir, sub), ignore_errors=True)
+
+
 def estimate_minutes(item: Dict, q: Dict) -> float:
     """Expected length of one queued experiment: the average of done runs of the same model and
     length (or a default), plus the captioning of its images that have none yet."""
@@ -296,9 +308,7 @@ def run(log=print, hours: float = 0) -> None:
                 code = subprocess.call([sys.executable, "-m", "oslora.train", cfg_path], cwd=ROOT,
                                        stdout=out, stderr=subprocess.STDOUT, env=_env())
             os.utime(LOCK)
-            if code == 0:  # the curves are in the DB and metrics.jsonl; the LoRA itself isn't needed
-                for f in glob.glob(os.path.join(run_dir, "*.safetensors")):
-                    os.remove(f)
+            drop_weights(run_dir)
             q = _read(QUEUE, {"items": []})
             for it in q["items"]:
                 if it["name"] == item["name"]:
