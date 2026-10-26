@@ -15,9 +15,10 @@ and 3rd plan on the same pair skip the encoding.
 Plans: ``auto`` (the Autopilot), ``auto2`` (the same with another seed: how far two runs differ
 by chance), ``low`` / ``high`` (Autopilot off, cosine from 4e-5 / 1.5e-4).
 
-A dataset without captions gets them right before its first run (3 lengths, character mode, the
-default caption model), and its check-up report for the dataset statistics. While a training
-started from the UI is running, the queue waits.
+Right before its first run, a dataset nobody has prepared gets what the check-up's one-click fixes
+add: face close-ups, captions (3 lengths, character mode, the default caption model) and degraded
+copies; its check-up report goes into the dataset statistics. While a training started from the UI
+is running, the queue waits.
 """
 
 import argparse
@@ -152,9 +153,36 @@ def ui_training() -> bool:
     return False
 
 
+def unprepared(folder: str) -> bool:
+    """No degraded copies yet: nobody (neither the user nor the queue) has prepared this dataset.
+    The copies are the last step, so a preparation cut short is picked up again next time."""
+    from .data import AUG_PREFIX
+
+    return not any(n.startswith(AUG_PREFIX) for n in os.listdir(folder))
+
+
+def _apply(folder: str, action: str, log) -> None:
+    """The check-up's one-click fix ``action``, if the check-up offers it."""
+    from . import diagnose
+
+    for f in diagnose.analyze(folder, PROXY["resolution"])["findings"]:
+        if f.get("fix") == action and f["files"]:
+            log(f"[실험] {f['fix_label']}: {diagnose.fix(folder, action, f['files'])['message']}")
+            return
+
+
 def prepare_dataset(folder: str, log=print) -> bool:
-    """Captions for the images that have none (existing ones are kept) and the check-up report;
-    False if captioning failed."""
+    """Make the dataset what the UI's check-up would: a dataset nobody has prepared gets face
+    close-ups, then captions for every image without one (existing ones are kept), then degraded
+    copies (they reuse the original's caption). Datasets prepared by hand are left as they are, and
+    a dataset is prepared once only -- all its runs must see the same images. False if captioning
+    failed."""
+    fresh = unprepared(folder)
+    if fresh:
+        try:
+            _apply(folder, "facecrop", log)
+        except Exception as e:
+            log(f"[실험] 얼굴 클로즈업 실패 (실험은 계속): {folder}: {e}")
     if uncaptioned(folder):
         log(f"[실험] 캡션 만들기: {folder} ({uncaptioned(folder)}장)")
         status = os.path.join(EXP_DIR, "caption_status.json")
@@ -169,9 +197,11 @@ def prepare_dataset(folder: str, log=print) -> bool:
     try:
         from . import diagnose
 
-        diagnose.analyze(folder, PROXY["resolution"])
+        if fresh:
+            _apply(folder, "augment", log)
+        diagnose.analyze(folder, PROXY["resolution"])  # the report as trained, for the dataset stats
     except Exception as e:
-        log(f"[실험] 진단 실패 (실험은 계속): {folder}: {e}")
+        log(f"[실험] 진단·변형 사본 실패 (실험은 계속): {folder}: {e}")
     return True
 
 
@@ -182,7 +212,10 @@ def estimate_minutes(item: Dict, q: Dict) -> float:
     done = [it["minutes"] for it in q["items"] if it.get("minutes") and it["model"] == item["model"]
             and it.get("steps", 600) == steps and it["state"] == "done"]
     m = sum(done) / len(done) if done else DEFAULT_MINUTES.get(item["model"], 45) * steps / 600
-    return m + uncaptioned(item["folder"]) * CAPTION_SEC / 60
+    todo = uncaptioned(item["folder"])
+    if unprepared(item["folder"]):
+        todo += 0.2 * (todo + captioned(item["folder"]))  # the face close-ups need captions too
+    return m + todo * CAPTION_SEC / 60
 
 
 def run(log=print, hours: float = 0) -> None:
