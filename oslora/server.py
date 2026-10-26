@@ -31,7 +31,8 @@ from .data import IMAGE_EXTS, scan_folder
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUTPUT = os.path.join(ROOT, "output")
-RUN_ROOTS = [OUTPUT, os.path.join(ROOT, "tests", "out")]
+EXP_OUT = os.path.join(ROOT, "experiments")  # proxy experiments (python -m oslora.experiments)
+RUN_ROOTS = [OUTPUT, EXP_OUT, os.path.join(ROOT, "tests", "out")]
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 CACHE = os.path.join(ROOT, "cache")
 PY = sys.executable
@@ -254,7 +255,8 @@ def list_runs() -> List[Dict]:
                     "step": st.get("step", 0),
                     "max_steps": st.get("max_steps"),
                     "updated": st.get("updated") or os.path.getmtime(p),
-                    "test": root != OUTPUT,
+                    "test": root not in (OUTPUT, EXP_OUT),
+                    "exp": root == EXP_OUT,
                     "alive": STATE["train_run"] == d and running("train"),
                 }
     return sorted(runs.values(), key=lambda r: r["updated"], reverse=True)

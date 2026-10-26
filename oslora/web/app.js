@@ -65,7 +65,7 @@ async function refreshRuns() {
     $("#run-list").innerHTML = runs.map(r => {
       const st = r.max_steps && r.phase !== "done" ? `${PHASE[r.phase] || r.phase} ${r.step}/${r.max_steps}` : (PHASE[r.phase] || r.phase);
       return `<li class="${r === live ? "live" : ""}"><button class="${r.name === S.run ? "sel" : ""}" data-run="${esc(r.name)}">
-        <span class="rn">${esc(r.name)}</span><span class="rs">${esc(st)}${r.test ? " (테스트)" : ""}</span></button></li>`;
+        <span class="rn">${esc(r.name)}</span><span class="rs">${esc(st)}${r.test ? " (테스트)" : r.exp ? " (실험)" : ""}</span></button></li>`;
     }).join("") || `<li class="hint" style="padding:0 10px">아직 없습니다</li>`;
     $$("#run-list button").forEach(b => b.addEventListener("click", () => {
       S.run = b.dataset.run; refreshRuns();
