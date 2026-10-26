@@ -2,15 +2,18 @@
 recorded in the history DB (see rundb.py). They answer what one full run per dataset can't:
 how a dataset's traits and the LR plan shape likeness / leak / holdout -- per model.
 
-A proxy run is 512 px, 600 steps, evals every 50 steps, quality judges every 150, no progress
-samples, cleaned up when done (only the final LoRA stays): ~30-55 min each on a 5060 Ti. Caches
-are per model and dataset, so the 2nd and 3rd plan on the same pair skip the encoding.
+A proxy run is 512 px, 1500 steps, evals every 100 steps, quality judges every 300, no progress
+samples, no early stop, cleaned up when done: ~1.5 h (Qwen) on a 5060 Ti. 1500 steps reach the
+stretch where holdout stands still while leak grows -- the part the Autopilot has to judge (600
+steps ended before it: every decision was "hold"). Caches are per model and dataset, so the 2nd
+and 3rd plan on the same pair skip the encoding.
 
     venv\\Scripts\\python -m oslora.experiments plan D:\\data\\A D:\\data\\B [--models qwen21,krea2]
-    venv\\Scripts\\python -m oslora.experiments run [--hours 6.5]   (stop: experiments\\STOP; resumes later)
+    venv\\Scripts\\python -m oslora.experiments run [--hours 6.5 | --until 15:00]   (stop: experiments\\STOP)
     venv\\Scripts\\python -m oslora.experiments status
 
-Plans: ``auto`` (the Autopilot), ``low`` / ``high`` (Autopilot off, cosine from 4e-5 / 1.5e-4).
+Plans: ``auto`` (the Autopilot), ``auto2`` (the same with another seed: how far two runs differ
+by chance), ``low`` / ``high`` (Autopilot off, cosine from 4e-5 / 1.5e-4).
 
 A dataset without captions gets them right before its first run (3 lengths, character mode, the
 default caption model), and its check-up report for the dataset statistics. While a training
@@ -36,12 +39,13 @@ LOCK = os.path.join(EXP_DIR, "running.lock")
 MODELS = ("qwen21", "krea2", "moss_image")
 PLANS = {
     "auto": {"autopilot": True, "lr": 1e-4},
+    "auto2": {"autopilot": True, "lr": 1e-4, "seed": 43},
     "low": {"autopilot": False, "lr": 4e-5},
     "high": {"autopilot": False, "lr": 1.5e-4},
 }
-PROXY = {"resolution": 512, "max_steps": 600, "eval_every": 50, "quality_every": 150}
+PROXY = {"resolution": 512, "max_steps": 1500, "eval_every": 100, "quality_every": 300}
 CAPTION = {"model": "qwen38-27b-gguf", "style": "moss", "subject": "character"}
-DEFAULT_MINUTES = {"qwen21": 40, "krea2": 55, "moss_image": 35}  # until the queue has its own timings
+DEFAULT_MINUTES = {"qwen21": 40, "krea2": 55, "moss_image": 35}  # per 600 steps, until the queue has its own timings
 CAPTION_SEC = 25  # per image, Qwen3.8 27B on a 5060 Ti
 
 
@@ -67,8 +71,8 @@ def captioned(folder: str) -> int:
     return sum(1 for _, cap in scan_folder(folder, ".txt") if cap)
 
 
-def run_name(folder: str, model: str, plan: str) -> str:
-    return f"EXP_{os.path.basename(os.path.normpath(folder))}_{model}_{plan}"
+def run_name(folder: str, model: str, plan: str, steps: int = PROXY["max_steps"]) -> str:
+    return f"EXP_{os.path.basename(os.path.normpath(folder))}_{model}_{plan}_{steps}"
 
 
 def plan(folders: List[str], models=MODELS, plans=tuple(PLANS)) -> Dict:
@@ -86,7 +90,8 @@ def plan(folders: List[str], models=MODELS, plans=tuple(PLANS)) -> Dict:
             continue
         name = run_name(f, m, p)
         if name not in have:
-            q["items"].append({"name": name, "folder": f, "model": m, "plan": p, "state": "queued"})
+            q["items"].append({"name": name, "folder": f, "model": m, "plan": p, "state": "queued",
+                               "steps": PROXY["max_steps"]})
             have.add(name)
     _write(QUEUE, q)
     return {"queued": sum(1 for it in q["items"] if it["state"] == "queued"),
@@ -105,9 +110,12 @@ def make_config(item: Dict):
     from . import photoreal
 
     cfg.dataset.photo_texture = photoreal.RATE
-    cfg.train.max_steps = PROXY["max_steps"]
+    steps = item.get("steps", 600)
+    cfg.train.max_steps = steps
     cfg.train.lr = p["lr"]
+    cfg.train.seed = p.get("seed", cfg.train.seed)
     cfg.autopilot.enabled = p["autopilot"]
+    cfg.autopilot.early_stop = False  # the whole curve: what happens after it would have stopped
     cfg.autopilot.start_lr = min(p["lr"], cfg.autopilot.max_lr)
     cfg.autopilot.eval_every = PROXY["eval_every"]
     cfg.autopilot.quality_every = PROXY["quality_every"]
@@ -115,7 +123,7 @@ def make_config(item: Dict):
     cfg.sample.every = 0
     cfg.sample.prompts = []
     cfg.sample.steps, cfg.sample.cfg = ad.sample_steps, ad.sample_cfg
-    cfg.save_every = PROXY["max_steps"]
+    cfg.save_every = steps
     cfg.save_keep = 1
     cfg.cleanup = True
     return cfg
@@ -160,11 +168,12 @@ def prepare_dataset(folder: str, log=print) -> bool:
 
 
 def estimate_minutes(item: Dict, q: Dict) -> float:
-    """Expected length of one queued experiment: the model's average so far (or a default), plus
-    the captioning if its folder has no captions yet."""
+    """Expected length of one queued experiment: the average of done runs of the same model and
+    length (or a default), plus the captioning if its folder has no captions yet."""
+    steps = item.get("steps", 600)
     done = [it["minutes"] for it in q["items"] if it.get("minutes") and it["model"] == item["model"]
-            and it["state"] == "done"]
-    m = sum(done) / len(done) if done else DEFAULT_MINUTES.get(item["model"], 45)
+            and it.get("steps", 600) == steps and it["state"] == "done"]
+    m = sum(done) / len(done) if done else DEFAULT_MINUTES.get(item["model"], 45) * steps / 600
     if captioned(item["folder"]) == 0:
         from .data import scan_folder
 
@@ -271,6 +280,7 @@ def main():
     p.add_argument("--plans", default=",".join(PLANS))
     r = sub.add_parser("run")
     r.add_argument("--hours", type=float, default=0, help="time budget: don't start what wouldn't finish in it")
+    r.add_argument("--until", default="", help="the same as a clock time, e.g. 15:00 (next such time)")
     sub.add_parser("status")
     a = ap.parse_args()
     if a.cmd == "plan":
@@ -280,7 +290,17 @@ def main():
             print(f"  건너뜀: {f} ({why})")
         print(json.dumps(status(), ensure_ascii=False, indent=1))
     elif a.cmd == "run":
-        run(hours=a.hours)
+        hours = a.hours
+        if a.until:
+            import datetime
+
+            now = datetime.datetime.now()
+            hh, mm = map(int, a.until.split(":"))
+            end = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+            if end <= now:
+                end += datetime.timedelta(days=1)
+            hours = (end - now).total_seconds() / 3600
+        run(hours=hours)
     else:
         print(json.dumps(status(), ensure_ascii=False, indent=1))
 
