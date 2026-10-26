@@ -13,7 +13,8 @@ and 3rd plan on the same pair skip the encoding.
     venv\\Scripts\\python -m oslora.experiments status
 
 Plans: ``auto`` (the Autopilot), ``auto2`` (the same with another seed: how far two runs differ
-by chance), ``low`` / ``high`` (Autopilot off, cosine from 4e-5 / 1.5e-4).
+by chance), ``mask`` (auto with masked training, on auto's seed), ``low`` / ``high`` (Autopilot
+off, cosine from 4e-5 / 1.5e-4).
 
 Seeds: random per dataset, so what a model learns from the runs isn't one seed's luck (with one
 seed for everything, chance looks like a dataset trait and the spread looks smaller than it is).
@@ -46,6 +47,7 @@ MODELS = ("qwen21", "krea2", "moss_image")
 PLANS = {
     "auto": {"autopilot": True, "lr": 1e-4},
     "auto2": {"autopilot": True, "lr": 1e-4, "repeat": True},
+    "mask": {"autopilot": True, "lr": 1e-4, "mask": True},  # auto with masked training, on auto's seed
     "low": {"autopilot": False, "lr": 4e-5},
     "high": {"autopilot": False, "lr": 1.5e-4},
 }
@@ -147,6 +149,7 @@ def make_config(item: Dict):
     cfg.train.lr = p["lr"]
     cfg.train.seed = item.get("seed", cfg.train.seed)  # runs queued before per-dataset seeds: 42
     cfg.autopilot.enabled = p["autopilot"]
+    cfg.mask.enabled = bool(p.get("mask"))
     cfg.autopilot.early_stop = False  # the whole curve: what happens after it would have stopped
     cfg.autopilot.start_lr = min(p["lr"], cfg.autopilot.max_lr)
     cfg.autopilot.eval_every = PROXY["eval_every"]

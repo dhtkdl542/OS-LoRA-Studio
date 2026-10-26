@@ -19,3 +19,5 @@ nvidia-ml-py==13.615.71
 # dataset check-up and quality judges (face detection / ArcFace)
 opencv-python==5.0.0.93
 onnxruntime==1.31.0
+# masked training: the person segmenter (MediaPipe multiclass selfie) runs on LiteRT, CPU
+ai-edge-litert==2.3.0

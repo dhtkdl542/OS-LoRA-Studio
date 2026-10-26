@@ -112,6 +112,15 @@ class DatasetConfig:
 
 
 @dataclass
+class MaskConfig:
+    """Masked training (masking.py): the loss counts the subject more than its surroundings."""
+    enabled: bool = False
+    # what the automatic masks keep: person (hair to clothes) | no_clothes | head (face + hair)
+    preset: str = "person"
+    floor: float = 0.1  # weight outside the mask (0 = ignored; a little keeps the subject in a scene)
+
+
+@dataclass
 class NetworkConfig:
     rank: int = 32
     alpha: float = 32
@@ -190,6 +199,7 @@ class RunConfig:
     cleanup: bool = False  # when done: drop resume states, moved-aside files and quality renders
     paths: ModelPaths = field(default_factory=ModelPaths)
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
+    mask: MaskConfig = field(default_factory=MaskConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
     sample: SampleConfig = field(default_factory=SampleConfig)

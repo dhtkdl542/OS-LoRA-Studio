@@ -300,11 +300,33 @@ class Trainer:
             self.rl.set_status(message=f"VAE 인코딩 {i + 1}/{len(todo)}")
         for it in self.items + self.extra_items:
             it.latent = self.cache.get_latent(it.key)
+        if cfg.mask.enabled:
+            self._attach_masks()
         if float(cfg.dataset.photo_texture or 0) > 0:
             self._cache_photo()
         self.vae.to("cpu")
         flush()
         self.rl.log(f"캐싱 완료 (새로 인코딩: 텍스트 {len(missing)}, 이미지 {len(todo)})")
+
+    def _attach_masks(self):
+        """Masked training: masks for every image (made where missing), on the latent grid; the
+        loss and the fit / holdout probes then weight by them (masking.py)."""
+        from . import masking
+
+        m = self.cfg.mask
+        self.rl.set_status(message="마스크 준비")
+        n = masking.attach(self.items + self.extra_items, m.preset, self.rl.log)
+        self.masked = masking.MaskedLoss(m.floor)
+        label = masking.PRESETS[m.preset][0]
+        self.rl.log(f"마스크 학습: '{label}' 마스크 {n['used']}장 (새로 만듦 {n['made']}장, 마스크 없이 학습 {n['skipped']}장), "
+                    f"마스크가 덮는 면적 중간값 {n['cover']}%, 마스크 밖은 {m.floor:g}배로 학습해요")
+
+    def _loss(self, pred, target, items, flip: bool = False):
+        """MSE, under the items' masks when masked training is on."""
+        masked = getattr(self, "masked", None)
+        if masked is None:
+            return F.mse_loss(pred.float(), target.float())
+        return masked(pred, target, masked.batch_masks(items, target.shape, flip))
 
     def _cache_photo(self):
         """Photo-texture latents (sensor noise at the training size) for every item but the
@@ -427,7 +449,7 @@ class Trainer:
             total = 0.0
             for it, t, noise in probes:
                 pred, target = self._predict(it.latent, t, noise.to(self.device), it.text)
-                total += float(F.mse_loss(pred, target))
+                total += float(self._loss(pred, target, [it]))
             return total / len(probes)
 
         fit = mse(self.fit_probes)
@@ -995,7 +1017,8 @@ class Trainer:
             x0 = torch.stack([lat for lat, _ in picks]).to(self.device, torch.float32)
             texts = [empty if random.random() < cfg.dataset.caption_dropout else self._train_text(it, plain=photo)
                      for it, (_, photo) in zip(batch, picks)]
-            if cfg.dataset.flip and random.random() < 0.5:
+            flipped = cfg.dataset.flip and random.random() < 0.5
+            if flipped:
                 x0 = x0.flip(-1)
             emb, mask = stack_text(texts, self.device)
             # mixed resolution: each size gets its own shift (more tokens -> later noise levels)
@@ -1004,7 +1027,7 @@ class Trainer:
             noise = torch.randn_like(x0)
             xt = (1 - tt.view(-1, 1, 1, 1)) * x0 + tt.view(-1, 1, 1, 1) * noise
             pred = self.model.predict(self.dit, xt, tt, emb, mask)
-            loss = F.mse_loss(pred.float(), (noise - x0).float())
+            loss = self._loss(pred, noise - x0, batch, flipped)
             loss.backward()
             gnorm = float(torch.nn.utils.clip_grad_norm_(params, t.grad_clip if t.grad_clip > 0 else 1e9))
             loss_v = float(loss)
@@ -1152,7 +1175,7 @@ class Trainer:
             if hasattr(self, attr):
                 setattr(self, attr, None)
         for it in getattr(self, "items", []) + getattr(self, "extra_items", []):
-            it.latent = it.latent_photo = it.text = it.text_plain = None
+            it.latent = it.latent_photo = it.text = it.text_plain = it.mask = None
             it.alt_text, it.alt_text_plain = [], []
         self.text = {}
         self.fit_probes = self.val_probes = self.leak_probes = []

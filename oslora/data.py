@@ -33,6 +33,7 @@ class Item:
     # latent, so "polished, no visible grain" isn't taught on a toned, grainy picture
     text_plain: Optional[torch.Tensor] = None
     alt_text_plain: List[Tuple[torch.Tensor, float]] = field(default_factory=list)
+    mask: Optional[torch.Tensor] = None  # masked training: (H, W) loss weights on the latent grid (masking.py)
     holdout: bool = False
 
 
@@ -68,16 +69,21 @@ def bucket_for(width: int, height: int, resolution: int, step: int = 16, max_rat
     return bw, bh
 
 
-def load_image(path: str, size: Tuple[int, int], photo: bool = False, tone: bool = False) -> torch.Tensor:
-    """Cover-resize + center-crop to ``size``; returns (3, H, W) in [-1, 1]. ``photo`` adds the
-    photo texture (tone + phone sensor noise) at the training size."""
-    img = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
+def cover_crop(img: Image.Image, size: Tuple[int, int], resample=Image.LANCZOS) -> Image.Image:
+    """Cover-resize + center-crop to ``size`` (w, h): how a training image is fitted to its bucket
+    (and its mask, so the two line up)."""
     bw, bh = size
     scale = max(bw / img.width, bh / img.height)
     nw, nh = max(bw, round(img.width * scale)), max(bh, round(img.height * scale))
-    img = img.resize((nw, nh), Image.LANCZOS)
+    img = img.resize((nw, nh), resample)
     left, top = (nw - bw) // 2, (nh - bh) // 2
-    img = img.crop((left, top, left + bw, top + bh))
+    return img.crop((left, top, left + bw, top + bh))
+
+
+def load_image(path: str, size: Tuple[int, int], photo: bool = False, tone: bool = False) -> torch.Tensor:
+    """Cover-resize + center-crop to ``size``; returns (3, H, W) in [-1, 1]. ``photo`` adds the
+    photo texture (tone + phone sensor noise) at the training size."""
+    img = cover_crop(ImageOps.exif_transpose(Image.open(path)).convert("RGB"), size)
     if photo:
         from . import photoreal
 

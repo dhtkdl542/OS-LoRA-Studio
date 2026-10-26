@@ -670,6 +670,7 @@ class TrainReq(BaseModel):
     holdout: str = "auto"
     caption_dropout: float = 0.05
     photo_texture: bool = False  # a third of the steps see the image with a natural photo tone + phone noise
+    masked: bool = False  # masked training: the loss counts the person, the background at 0.1 (masking.py)
     save_keep: int = 3  # regular checkpoints kept (0 = all)
     cleanup: bool = True  # drop resume states / quality renders when done
     int8_compute: bool = False  # int8 tensor cores for the frozen weights (faster, experimental)
@@ -828,6 +829,7 @@ def train_start(req: TrainReq):
 
     cfg.dataset.photo_texture = photoreal.RATE if req.photo_texture else 0.0
     cfg.dataset.photo_tone = bool(req.photo_texture)
+    cfg.mask.enabled = bool(req.masked)
     cfg.train.int8_compute = bool(req.int8_compute)
     cfg.dataset.multires = [r for r in (512, 768) if r < req.resolution] if req.multires else []
     cfg.save_keep, cfg.cleanup = max(0, int(req.save_keep)), bool(req.cleanup)
