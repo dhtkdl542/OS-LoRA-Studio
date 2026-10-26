@@ -15,6 +15,11 @@ and 3rd plan on the same pair skip the encoding.
 Plans: ``auto`` (the Autopilot), ``auto2`` (the same with another seed: how far two runs differ
 by chance), ``low`` / ``high`` (Autopilot off, cosine from 4e-5 / 1.5e-4).
 
+Seeds: random per dataset, so what a model learns from the runs isn't one seed's luck (with one
+seed for everything, chance looks like a dataset trait and the spread looks smaller than it is).
+The plans of one dataset share its seed -- auto vs low vs high then differ by the LR plan, not by
+chance -- and ``auto2`` gets a second random one. Seeds are kept in the queue and the run config.
+
 Right before its first run, a dataset nobody has prepared gets what the check-up's one-click fixes
 add: face close-ups, captions (3 lengths, character mode, the default caption model) and degraded
 copies; its check-up report goes into the dataset statistics. While a training started from the UI
@@ -40,7 +45,7 @@ LOCK = os.path.join(EXP_DIR, "running.lock")
 MODELS = ("qwen21", "krea2", "moss_image")
 PLANS = {
     "auto": {"autopilot": True, "lr": 1e-4},
-    "auto2": {"autopilot": True, "lr": 1e-4, "seed": 43},
+    "auto2": {"autopilot": True, "lr": 1e-4, "repeat": True},
     "low": {"autopilot": False, "lr": 4e-5},
     "high": {"autopilot": False, "lr": 1.5e-4},
 }
@@ -86,6 +91,23 @@ def run_name(folder: str, model: str, plan: str, steps: int = PROXY["max_steps"]
     return f"EXP_{os.path.basename(os.path.normpath(folder))}_{model}_{plan}_{steps}"
 
 
+def assign_seeds(q: Dict) -> None:
+    """A seed for every item without one: the one its dataset's runs already use (repeats: the
+    dataset's repeat seed), else a new random one."""
+    import random
+
+    def group(it):
+        return it["folder"], bool(PLANS[it["plan"]].get("repeat"))
+
+    seeds = {}
+    for it in q["items"]:
+        if "seed" in it:
+            seeds.setdefault(group(it), it["seed"])
+    for it in q["items"]:
+        if "seed" not in it and it["state"] == "queued":
+            it["seed"] = seeds.setdefault(group(it), random.SystemRandom().randrange(1, 2 ** 31))
+
+
 def plan(folders: List[str], models=MODELS, plans=tuple(PLANS)) -> Dict:
     """Add every (dataset, model, plan) to the queue, autopilot runs of all datasets first (the
     most useful data early), then the fixed-LR contrasts. Folders without captions get them when
@@ -104,6 +126,7 @@ def plan(folders: List[str], models=MODELS, plans=tuple(PLANS)) -> Dict:
             q["items"].append({"name": name, "folder": f, "model": m, "plan": p, "state": "queued",
                                "steps": PROXY["max_steps"]})
             have.add(name)
+    assign_seeds(q)
     _write(QUEUE, q)
     return {"queued": sum(1 for it in q["items"] if it["state"] == "queued"),
             "skipped": sorted(set(skipped))}
@@ -122,7 +145,7 @@ def make_config(item: Dict):
     steps = item.get("steps", 600)
     cfg.train.max_steps = steps
     cfg.train.lr = p["lr"]
-    cfg.train.seed = p.get("seed", cfg.train.seed)
+    cfg.train.seed = item.get("seed", cfg.train.seed)  # runs queued before per-dataset seeds: 42
     cfg.autopilot.enabled = p["autopilot"]
     cfg.autopilot.early_stop = False  # the whole curve: what happens after it would have stopped
     cfg.autopilot.start_lr = min(p["lr"], cfg.autopilot.max_lr)
