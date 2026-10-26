@@ -14,7 +14,7 @@ import random
 import sys
 import time
 import traceback
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -216,18 +216,21 @@ class Trainer:
         self.rl.log(f"★ {label} 최고 갱신: step {step} ({value:.4f}) → {name}_{step:05d}.safetensors 저장{note}")
 
     @staticmethod
-    def _train_text(it: Item) -> torch.Tensor:
-        """One of the long / medium / short captions (weighted), or the single caption."""
-        if not it.alt_text:
-            return it.text
-        return random.choices([t for t, _ in it.alt_text], weights=[w for _, w in it.alt_text])[0]
+    def _train_text(it: Item, plain: bool = False) -> torch.Tensor:
+        """One of the long / medium / short captions (weighted), or the single caption; ``plain``:
+        the version without image-finish statements, if there is one."""
+        alt, single = (it.alt_text_plain, it.text_plain) if plain and it.text_plain is not None else (it.alt_text, it.text)
+        if not alt:
+            return single
+        return random.choices([t for t, _ in alt], weights=[w for _, w in alt])[0]
 
-    def _train_latent(self, it: Item) -> torch.Tensor:
-        """The clean latent, or (photo_texture of the time) the photo-textured one."""
+    def _train_latent(self, it: Item) -> Tuple[torch.Tensor, bool]:
+        """The clean latent, or (photo_texture of the time) the photo-textured one; True for the
+        latter, whose caption then says nothing about the finish."""
         p = float(self.cfg.dataset.photo_texture or 0)
         if it.latent_photo is not None and p > 0 and random.random() < p:
-            return it.latent_photo
-        return it.latent
+            return it.latent_photo, True
+        return it.latent, False
 
     def _holdout_indices(self, names: List[str]) -> List[int]:
         """Held-out images, fixed per run (holdout.json) so continuing keeps the same val set.
@@ -251,8 +254,17 @@ class Trainer:
     def cache_everything(self):
         cfg = self.cfg
         self.rl.set_status(phase="caching", message="텍스트 임베딩 캐싱")
+        # the photo texture with the tone: its steps get the captions without finish statements
+        plain = {}
+        if cfg.dataset.photo_tone and float(cfg.dataset.photo_texture or 0) > 0:
+            from .augment import strip_finish
+
+            for it in self.items + self.extra_items:
+                if not os.path.basename(it.image).startswith(AUG_PREFIX):
+                    for t in [it.caption] + [t for t, _ in it.alt]:
+                        plain[t] = strip_finish(t)
         texts = ({it.caption for it in self.items + self.extra_items} | {t for it in self.items + self.extra_items for t, _ in it.alt} | {""}
-                 | set(cfg.sample.prompts)
+                 | set(plain.values()) | set(cfg.sample.prompts)
                  | set(cfg.autopilot.leak_prompts) | set(self.quality_prompts) | set(self.checks.values()))
         missing = [t for t in texts if self.cache.get_text(t) is None]
         if missing:
@@ -267,6 +279,13 @@ class Trainer:
         for it in self.items + self.extra_items:
             it.text = self.text[it.caption]
             it.alt_text = [(self.text[t], w) for t, w in it.alt]
+            if it.caption in plain:
+                it.text_plain = self.text[plain[it.caption]]
+                it.alt_text_plain = [(self.text[plain[t]], w) for t, w in it.alt]
+        if plain:
+            n = sum(1 for t, p in plain.items() if p != t)
+            self.rl.log(f"사진 질감 step의 캡션: 화질 문장(매끈함·노이즈 없음·보정된 피부 등)을 뺀 버전을 써요 "
+                        f"(캡션 {len(plain)}개 중 {n}개에서 뺐어요)")
         n_alt = sum(1 for it in self.items if it.alt)
         if n_alt:
             self.rl.log(f"캡션 길이 섞기: {n_alt}장은 긴/중간/짧은 캡션 중 하나를 매번 골라요 "
@@ -972,8 +991,10 @@ class Trainer:
             gpu.active, t_step = True, time.time()
 
             batch = sampler.next()
-            x0 = torch.stack([self._train_latent(it) for it in batch]).to(self.device, torch.float32)
-            texts = [empty if random.random() < cfg.dataset.caption_dropout else self._train_text(it) for it in batch]
+            picks = [self._train_latent(it) for it in batch]
+            x0 = torch.stack([lat for lat, _ in picks]).to(self.device, torch.float32)
+            texts = [empty if random.random() < cfg.dataset.caption_dropout else self._train_text(it, plain=photo)
+                     for it, (_, photo) in zip(batch, picks)]
             if cfg.dataset.flip and random.random() < 0.5:
                 x0 = x0.flip(-1)
             emb, mask = stack_text(texts, self.device)
@@ -1131,8 +1152,8 @@ class Trainer:
             if hasattr(self, attr):
                 setattr(self, attr, None)
         for it in getattr(self, "items", []) + getattr(self, "extra_items", []):
-            it.latent = it.latent_photo = it.text = None
-            it.alt_text = []
+            it.latent = it.latent_photo = it.text = it.text_plain = None
+            it.alt_text, it.alt_text_plain = [], []
         self.text = {}
         self.fit_probes = self.val_probes = self.leak_probes = []
         memclean.release_process_memory()

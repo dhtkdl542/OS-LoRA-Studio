@@ -29,6 +29,10 @@ class Item:
     # empty = the single .txt caption
     alt: List[Tuple[str, float]] = field(default_factory=list)
     alt_text: List[Tuple[torch.Tensor, float]] = field(default_factory=list)
+    # the same captions without their image-finish statements: paired with the photo-textured
+    # latent, so "polished, no visible grain" isn't taught on a toned, grainy picture
+    text_plain: Optional[torch.Tensor] = None
+    alt_text_plain: List[Tuple[torch.Tensor, float]] = field(default_factory=list)
     holdout: bool = False
 
 

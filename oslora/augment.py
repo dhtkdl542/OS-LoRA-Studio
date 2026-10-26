@@ -318,21 +318,86 @@ _QUALITY = re.compile(
     r"ai[- ]generated|digital(?:ly)?|snapshot|smooth\w*|clean|film(?:ic)?|pixel\w*|quality)\b", re.I)
 _OPENER = re.compile(r"^(the (image|photo|picture|overall|whole image)|overall|it (has|is|looks))\b", re.I)
 _MID = re.compile(r",?\s*(?:and|while|with)?\s*the (?:image|photo|overall look|whole image) (?:has|is|looks)\b.*$", re.I)
+# the retouched-skin look ("her skin appears very smooth and lightly retouched with a gentle sheen")
+_SKIN = re.compile(r"\b(smooth\w*|retouch\w*|airbrush\w*|poreless|flawless|sheen|glow\w*|glossy|dewy|luminous|porcelain)\b", re.I)
+_SKIN_TAIL = re.compile(r",?\s*(?:and|with|while)?\s*(?:her|the|whose) (?:skin|complexion)\b.*$", re.I)
+# trailing clauses that only describe the look: ", giving the image a clean, polished look",
+# ", captured in a smooth, polished portrait style"
+_TAILS = (_MID,
+          re.compile(r",?\s*(?:and\s+)?(?:giving|lending|creating|producing|resulting in)\b.*$", re.I),
+          re.compile(r",?\s*(?:captured|rendered|shot|presented)?\s*in an? (?:[\w-]+,\s+)*[^,;]*?\b(?:style|aesthetic|look)\b.*$", re.I))
+# style adjectives in front of the subject: "A polished digital-render style portrait", "A smooth,
+# highly retouched close-up portrait"
+_HEAD_NOUN = re.compile(r"\b(portrait|photo\w*|image|shot|picture|close-up|selfie)\b", re.I)
+_STYLE_ADJ = re.compile(r"\b(?:highly |very |lightly )?(?:polished|smooth|retouched|airbrushed|digital[- ]render|digital|"
+                        r"rendered|render|glossy|flawless|crisp|sharp|clean|high[- ]end|high[- ]definition)(?:[- ]style)?\b,?\s*", re.I)
+
+
+def _finishy(s: str) -> bool:
+    s = s.strip()
+    return ("finish" in s.lower() or bool(_OPENER.match(s) and _QUALITY.search(s)) or len(_QUALITY.findall(s)) >= 3
+            or bool(re.match(r"(?:her|the) (?:skin|complexion)\b", s, re.I) and _SKIN.search(s))
+            or bool(re.search(r"\bgives?\b.*\b(?:look|feel|aesthetic)\b", s, re.I) and _QUALITY.search(s)))
+
+
+# look phrases inside a list: "... even lighting and a smooth, polished finish", "... a smooth dewy
+# complexion, and glossy lips", "..., rendered with smooth skin and a studio-like finish"
+_LIST = r"(?:,\s*(?:and\s+)?(?:with\s+)?|\s+and\s+(?:with\s+)?|\s+with\s+|\s+in\s+)"  # how a list item is joined on
+_PHRASES = ((re.compile(r",?\s*(?:rendered|finished) with\b[^;.]*", re.I), _QUALITY),
+            (re.compile(_LIST + r"an?\s+(?:[\w-]+,\s+)*[^,;.]*?\bfinish\b[^,;.]*", re.I), None),
+            (re.compile(_LIST + r"an?\s+(?:[\w-]+,\s+)*[^,;.]*?\bcomplexion\b[^,;.]*", re.I), _SKIN),
+            (re.compile(r"(?:,\s*which features|" + _LIST + r")\s*(?:(?:extremely |very |ultra-|highly )?smooth,?\s+)?"
+                        r"(?:lightly |slightly |heavily |highly )?(?:retouched|airbrushed|poreless|flawless)\s+skin\b", re.I), None),
+            (re.compile(r"\s+and the smoothness of (?:her|the) skin", re.I), None))
+
+
+def _trim(s: str) -> str:
+    """A content clause without its look statements ("..., and the image has a polished finish",
+    "..., and her skin appears smooth and retouched", "... and a smooth, polished finish")."""
+    for pat, words in _PHRASES:
+        s = pat.sub(lambda m: "" if words is None or words.search(m.group(0)) else m.group(0), s)
+    for pat, words in [(p, _QUALITY) for p in _TAILS] + [(_SKIN_TAIL, _SKIN)]:
+        cut = pat.sub("", s)
+        if cut != s and cut.strip() and words.search(s[len(cut):]):
+            s = cut.rstrip(" ,;")
+    return s
+
+
+def _plain_head(s: str) -> str:
+    """The subject without style adjectives in front of its noun."""
+    m = _HEAD_NOUN.search(s)
+    if not m:
+        return s
+    before = s[:m.start()]
+    plain = _STYLE_ADJ.sub("", before)
+    if plain == before:
+        return s
+    plain = re.sub(r"[,\s]+$", " ", plain).lstrip()  # "A warm, " -> "A warm "
+    art = re.match(r"(an?)\s+", plain, re.I)
+    if art:  # the article follows the new first word
+        rest = plain[art.end():] + s[m.start():]
+        return ("An " if rest[:1].lower() in "aeiou" else "A ") + rest
+    out = plain + s[m.start():]
+    return out[:1].upper() + out[1:]
 
 
 def strip_finish(text: str) -> str:
     """Drop a caption's image-finish statements (sharpness, grain, retouching, render look), keeping
-    the first sentence and everything that describes content. A sentence that mixes both ("The
-    lighting is even, and the image has a polished finish ...") keeps its content half."""
-    sents = [x for x in re.split(r"(?<=[.!?])\s+", text.strip()) if x]
-    out = sents[:1]
-    for s in sents[1:]:
-        cut = _MID.sub("", s)
-        if cut != s and cut.strip() and _QUALITY.search(s[len(cut):]):
-            s = cut.rstrip(" ,;") + "."
-        if "finish" in s.lower() or (_OPENER.match(s) and _QUALITY.search(s)) or len(_QUALITY.findall(s)) >= 3:
-            continue
-        out.append(s)
+    the subject and everything that describes content. Works per clause, so a sentence that mixes
+    both ("The lighting is even, and the image has a polished finish ...", "...gray background; the
+    image has a smooth finish") keeps its content half -- the medium captions are one such sentence."""
+    out = []
+    for i, sent in enumerate(x for x in re.split(r"(?<=[.!?])\s+", text.strip()) if x):
+        body = sent.rstrip(".!? ")
+        kept = []
+        for j, clause in enumerate(body.split(";")):
+            clause = _trim(clause.strip())
+            if (i, j) == (0, 0):  # the subject
+                kept.append(_plain_head(clause))
+            elif clause and not _finishy(clause):
+                kept.append(clause)
+        if kept and kept[0]:
+            out.append("; ".join(kept) + (sent[len(body):].strip()[:1] or "."))
     return " ".join(out)
 
 
