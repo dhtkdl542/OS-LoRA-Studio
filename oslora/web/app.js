@@ -772,6 +772,7 @@ function flexLine(q) {
   if (q.style_ratio != null) parts.push(`<span class="${q.style_ratio > 2 ? "warn" : ""}" title="흔들림·노이즈 프롬프트의 전체 선명도 ÷ LoRA 없을 때. ×1이 이상적, 높을수록 LoRA가 효과를 지우는 중">화질 덮어쓰기 ×${q.style_ratio.toFixed(2)}</span>`);
   if (q.edit_delta != null) parts.push(`<span class="${q.edit_delta < -2 ? "warn" : ""}" title="'짧은 금발 단발 + 안경' 요청을 얼마나 따르는지 (LoRA 없을 때 대비). 내려가면 LoRA가 요청을 덮어쓰는 중">유연성 ${q.edit_delta >= 0 ? "+" : ""}${q.edit_delta.toFixed(1)}</span>`);
   if (q.bleed != null) parts.push(`<span class="${q.bleed > 0.45 ? "warn" : ""}" title="'노년 남성'을 그렸을 때 그 얼굴이 캐릭터와 닮은 정도. 낮아야 정상">번짐 ${q.bleed.toFixed(2)}</span>`);
+  if (q.pose_ratio != null) parts.push(`<span class="${q.pose_ratio < 0.7 ? "warn" : ""}" title="'고개를 옆으로 60° 돌린' 요청에서 얼굴이 돌아간 정도 ÷ LoRA 없을 때. ×1이 정상, 낮을수록 LoRA가 얼굴을 정면으로 끌고 가는 중 (정면 위주 데이터의 과적합)">고개 돌림 ×${q.pose_ratio.toFixed(2)}</span>`);
   return parts.length ? `<div class="jv flex">${parts.join("  ")}</div>` : "";
 }
 // a run's samples as a table: columns = steps, rows = sample prompts, with each column's label and
@@ -823,7 +824,8 @@ function renderSheet(d) {
     ${ql.diversity != null ? `<span>다양성 <b>${ql.diversity.toFixed(2)}</b></span>` : ""}
     ${ql.style_ratio != null ? `<span title="×1이 이상적">화질 덮어쓰기 <b>×${ql.style_ratio.toFixed(2)}</b></span>` : ""}
     ${ql.edit_delta != null ? `<span>유연성 <b>${ql.edit_delta >= 0 ? "+" : ""}${ql.edit_delta.toFixed(1)}</b></span>` : ""}
-    ${ql.bleed != null ? `<span>번짐 <b>${ql.bleed.toFixed(2)}</b></span>` : ""}` : "";
+    ${ql.bleed != null ? `<span>번짐 <b>${ql.bleed.toFixed(2)}</b></span>` : ""}
+    ${ql.pose_ratio != null ? `<span title="×1이 정상, 낮을수록 고개를 안 돌림">고개 돌림 <b>×${ql.pose_ratio.toFixed(2)}</b></span>` : ""}` : "";
   $("#sheet").innerHTML = steps.map(step => `
     <div class="sheet-col ${step === finalStep ? "best" : ""}">
       <div class="sc-step">${label(step)}${qLine(step)}</div>

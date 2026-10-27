@@ -78,6 +78,14 @@ CHECK_STYLE_PROMPT = ("A blurry, grainy night phone photo of a woman, taken with
 CHECK_EDIT_PROMPT = ("A close-up portrait photo of a woman with a short platinum-blonde bob haircut, wearing round "
                      "black-rimmed glasses, in front of a plain gray wall.")
 CHECK_EDIT_TEXT = "a woman with short platinum blonde bob hair wearing round black glasses"
+# head turned well away from the camera, each way: a LoRA trained on mostly frontal pictures pulls
+# such faces back toward the lens (measured 2026-10-27: Seoldam's yaw fell from 0.50 to 0.29)
+CHECK_POSE_PROMPTS = (
+    "A close-up portrait photo of a woman with her head turned about 60 degrees toward the left side of the frame "
+    "in a three-quarter view, eyes looking past the camera, soft daylight, plain light gray background.",
+    "A close-up portrait photo of a woman with her head turned about 60 degrees toward the right side of the frame "
+    "in a three-quarter view, eyes looking past the camera, soft daylight, plain light gray background.",
+)
 CHECK_BLEED_PROMPT = "A close-up portrait photo of an elderly man with short gray hair and a gray beard, plain background."
 
 
@@ -186,6 +194,7 @@ class AutopilotSection(AutopilotConfig):
     check_edit_prompt: str = CHECK_EDIT_PROMPT      # an attribute the dataset lacks
     check_edit_text: str = CHECK_EDIT_TEXT          # what CLIP should still see in it
     check_bleed_prompt: str = CHECK_BLEED_PROMPT    # someone else (no trigger): must not become her
+    check_pose_prompts: List[str] = field(default_factory=lambda: list(CHECK_POSE_PROMPTS))  # does the head still turn?
     leak_prompts: List[str] = field(default_factory=lambda: list(DEFAULT_LEAK_PROMPTS))
 
 

@@ -229,6 +229,19 @@ class Evaluator:
 
     MIN_FACE_PX = 100  # below this ArcFace is unreliable (measured: 78-117px faces scored 0.04-0.58)
 
+    def head_yaw(self, image: Image.Image) -> Optional[float]:
+        """How far the largest face is turned: the nose's offset from the eye midline in eye
+        distances (|yaw|; ~0 frontal, >= 0.35 three-quarter), from YuNet's landmarks."""
+        cv2 = self.face.cv2
+        img = cv2.cvtColor(np.asarray(image.convert("RGB")), cv2.COLOR_RGB2BGR)
+        self.face.det.setInputSize((img.shape[1], img.shape[0]))
+        _, faces = self.face.det.detect(img)
+        if faces is None or len(faces) == 0:
+            return None
+        lm = max(faces, key=lambda f: f[2] * f[3])[4:14].reshape(5, 2)
+        eyes = (lm[0] + lm[1]) / 2
+        return float(abs(lm[2][0] - eyes[0]) / (np.linalg.norm(lm[1] - lm[0]) + 1e-6))
+
     def likeness_of(self, image: Image.Image) -> Optional[float]:
         """The subject's likeness in one image: among faces large enough to judge, the one most
         like the training faces (a busy scene can contain other people), or None."""

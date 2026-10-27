@@ -149,6 +149,8 @@ class Trainer:
             checks = {"style": apply_trigger(a.check_style_prompt, c.trigger),
                       "edit": apply_trigger(a.check_edit_prompt, c.trigger),
                       "bleed": a.check_bleed_prompt}  # someone else: no trigger
+            for i, p in enumerate(getattr(a, "check_pose_prompts", []) or []):
+                checks[f"pose{i}"] = apply_trigger(p, c.trigger)
             self.checks = {k: v for k, v in checks.items() if v}
         self.train_items = [it for it in items if not it.holdout]
         # mixed resolution: the same training images again at the extra sizes (sampler only)
@@ -884,7 +886,12 @@ class Trainer:
                 q["edit_match"] = self.evaluator.text_match(im, a.check_edit_text)
             elif kind == "bleed":
                 q["bleed"] = self.evaluator.bleed(im)
+            elif kind.startswith("pose"):
+                q[f"yaw_{kind}"] = self.evaluator.head_yaw(im)
         base = self._quality_baseline(step, q)
+        turns = [(q[k], base[k]) for k in q if k.startswith("yaw_") and q[k] is not None and base.get(k)]
+        if turns:  # how far the head still turns, against the base model on the same prompts and seeds
+            q["pose_ratio"] = sum(v for v, _ in turns) / sum(b for _, b in turns)
         if base.get("style_sharp") and "style_sharp" in q:
             q["style_ratio"] = q["style_sharp"] / base["style_sharp"]
         if base.get("edit_match") is not None and "edit_match" in q:
@@ -905,6 +912,8 @@ class Trainer:
             parts.append(f"유연성 {q['edit_delta']:+.1f}")
         if "bleed" in q:
             parts.append(f"번짐 {q['bleed']:.2f}")
+        if "pose_ratio" in q:
+            parts.append(f"고개 돌림 ×{q['pose_ratio']:.2f}")
         self.rl.log(f"[품질 {step}] " + ", ".join(parts) + (f" | {note}" if note else ""))
         if note:
             self.rl.set_status(last_reason=note, strikes=self.ap.strikes if self.ap else 0)
@@ -915,7 +924,7 @@ class Trainer:
         """The step-0 values of the checks (the base model through the same prompts and seeds);
         when continuing a run, read back from metrics.jsonl."""
         if step == 0:
-            self.q_base = {k: q[k] for k in ("style_sharp", "edit_match", "bleed") if k in q}
+            self.q_base = {k: q[k] for k in q if k in ("style_sharp", "edit_match", "bleed") or k.startswith("yaw_")}
         if getattr(self, "q_base", None) is None:
             self.q_base = {}
             try:
@@ -923,7 +932,8 @@ class Trainer:
                     for line in f:
                         r = json.loads(line)
                         if r.get("type") == "quality" and r.get("step") == 0:
-                            self.q_base = {k: r[k] for k in ("style_sharp", "edit_match", "bleed") if k in r}
+                            self.q_base = {k: r[k] for k in r if k in ("style_sharp", "edit_match", "bleed")
+                                           or k.startswith("yaw_")}
                             break
             except (OSError, ValueError):
                 pass
