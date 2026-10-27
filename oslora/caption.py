@@ -374,6 +374,7 @@ def caption_folder(folder: str, model_key: str, style: str, subject: str, trigge
                    overwrite: bool = False, extra: str = "", status_path: str = "", caption_ext: str = ".txt"):
     from .augment import aug_lead, refresh_captions
     from .data import AUG_PREFIX, CAPTIONS_EXT, save_caption_variants
+    from .facewords import strip_face
 
     names = sorted(os.listdir(folder))
     # degraded copies are captioned from their own pixels too (the original's caption would call a
@@ -424,6 +425,8 @@ def caption_folder(folder: str, model_key: str, style: str, subject: str, trigge
     def finish(path, text):
         name = os.path.basename(path)
         lead = aug_lead(name) if name.startswith(AUG_PREFIX) else ""
+        if subject == "character":  # the rule asks for no face; what the captioner still writes goes here
+            text = strip_face(text)
         return f"{lead} {with_trigger(text)}".strip()
 
     # an overwrite never deletes: each old caption moves to excluded/캡션백업_<time>/ right before its new one
