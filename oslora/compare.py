@@ -5,6 +5,7 @@ seeds, each image scored for likeness (ArcFace vs. the training faces) and promp
 
 request.json: {"prompts": [...], "checkpoints": ["base", "best", 500, 1000, ...], "seed": 42,
                "strength": 1.0, "width": 768, "height": 1024, "steps": 24}
+              (optional "seeds": one per prompt, instead of seed + prompt index)
 Writes <run_dir>/compare/<id>/result.json (updated after every image) and the images.
 """
 
@@ -135,6 +136,7 @@ def main():
         if model.distilled_steps and not use_base:
             steps = model.sample_steps  # Turbo is distilled for its step count
         strength = float(req.get("strength", 1.0))
+        seeds = req.get("seeds") or [result["seed"] + pi for pi in range(len(prompts))]  # per prompt
         for ci, col in enumerate(columns):
             if col["file"]:
                 from safetensors.torch import load_file
@@ -149,7 +151,7 @@ def main():
                      done=done, total=total, eta=eta)
                 lat = model.sample(dit, emb[prompt], emb[""], w, h, steps=steps,
                                    cfg=model.base_sample_cfg if use_base else cfg.sample.cfg,
-                                   seed=result["seed"] + pi, distilled=not use_base)
+                                   seed=seeds[pi], distilled=not use_base)
                 img = vae.decode(lat)[0]
                 fname = f"c{ci:02d}_p{pi:02d}.jpg"
                 img.save(os.path.join(out_dir, fname), quality=92)
