@@ -355,6 +355,20 @@ code { background: var(--panel-2); padding: 1px 6px; border-radius: 4px; font-si
 .cmp-table th:first-child { min-width: 0; width: 18px; }
 .cmp-table .rowh { font-size: 11px; color: var(--faint); writing-mode: vertical-rl; transform: rotate(180deg); padding: 0 4px; min-width: 0; }
 .re-compare-head { display: flex; align-items: baseline; gap: 12px; }
+/* sample gallery: the checkpoint table's look, every step as a column */
+.gal { margin-top: 10px; }
+.gal[hidden] { display: none; }
+.gal th[data-step] { cursor: pointer; border-radius: var(--r-sm); padding: 4px 6px 8px; }
+.gal th[data-step]:hover b { color: var(--lilac); }
+.gal th .gs { display: block; font-size: 11px; margin-top: 2px; }
+.gal th .gs b { display: inline; font-size: 11px; }
+.gal th .tag { display: inline-block; margin-top: 3px; font-style: normal; font-size: 10.5px; color: var(--lilac); border: 1px solid var(--lilac-dim); border-radius: 99px; padding: 0 7px; }
+.gal th.ref { background: var(--lilac-glow); }
+.gal td img { height: 300px; }
+.gal thead th:first-child, .gal .rowh { position: sticky; left: 0; background: var(--panel); z-index: 2; }
+.gal td.ref img { border-color: var(--lilac); }
+.lb-nav { color: var(--faint); font-size: 12px; padding-top: 2px; }
+.lb-nav[hidden] { display: none; }
 .re-grid { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 12px; min-height: 0; align-items: center; }
 .re-grid figure { margin: 0; display: flex; flex-direction: column; justify-content: center; gap: 8px; min-height: 0; height: 100%; }
 .re-grid figure.lora + figure { margin-left: 14px; }

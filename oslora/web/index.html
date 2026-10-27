@@ -254,10 +254,11 @@
       </div>
       <div class="panel re-compare">
         <div class="re-compare-head">
-          <div class="seg" id="re-mode"><button data-v="samples" class="on">최종 샘플</button><button data-v="compare">체크포인트 비교</button></div>
+          <div class="seg" id="re-mode"><button data-v="samples" class="on">최종 샘플</button><button data-v="gallery">샘플 갤러리</button><button data-v="compare">체크포인트 비교</button></div>
           <span class="hint" id="re-cap"></span>
         </div>
         <div class="re-grid" id="re-grid"></div>
+        <div class="cmp-table gal" id="re-gal" hidden></div>
         <div class="cmp" id="re-cmp" hidden>
           <div class="cmp-form">
             <label class="field cmp-prompts"><span>프롬프트 <em>여러 개는 --- 줄로 구분</em></span><textarea id="cmp-prompts" rows="3"></textarea></label>
@@ -316,7 +317,7 @@
     </div>
   </div>
 </div>
-<div class="lightbox" id="lightbox" hidden><img id="lb-img" alt=""><div class="lb-cap" id="lb-cap"></div></div>
+<div class="lightbox" id="lightbox" hidden><img id="lb-img" alt=""><div class="lb-cap" id="lb-cap"></div><div class="lb-nav" id="lb-nav" hidden></div></div>
 <div class="toast" id="toast" hidden></div>
 <script src="app.js"></script>
 </body>

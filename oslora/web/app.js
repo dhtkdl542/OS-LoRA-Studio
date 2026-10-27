@@ -774,7 +774,9 @@ function flexLine(q) {
   if (q.bleed != null) parts.push(`<span class="${q.bleed > 0.45 ? "warn" : ""}" title="'노년 남성'을 그렸을 때 그 얼굴이 캐릭터와 닮은 정도. 낮아야 정상">번짐 ${q.bleed.toFixed(2)}</span>`);
   return parts.length ? `<div class="jv flex">${parts.join("  ")}</div>` : "";
 }
-function renderSheet(d) {
+// a run's samples as a table: columns = steps, rows = sample prompts, with each column's label and
+// the quality check that applies to it (the monitor's sheet and the results' gallery)
+function sampleTable(d) {
   const byStep = new Map();
   d.samples.forEach(s => { if (!byStep.has(s.step)) byStep.set(s.step, []); byStep.get(s.step)[s.prompt] = s.path; });
   const steps = [...byStep.keys()].sort((a, b) => a - b);
@@ -782,14 +784,25 @@ function renderSheet(d) {
   // once a run is done its last samples are rendered with the selected (recommended) weights
   const finalStep = d.status?.phase === "done" ? steps[steps.length - 1] : null;
   const label = step => step === 0 ? "베이스" : step === finalStep ? `최종 (추천, step ${best})` : `step ${step}`;
-  $("#sheet-hint").textContent = steps.length ? `열 = step, 행 = 샘플 프롬프트. 클릭하면 크게 봐요.` : "";
   // quality per column: the final render of the selected weights is logged with final=true
   const qByStep = new Map();
   (d.quality || []).forEach(q => qByStep.set(q.step, q));
-  const q0 = qByStep.get(0);
   // quality checks run on their own schedule: label each column with the latest check at or before it
   const qSteps = [...qByStep.keys()].sort((a, b) => a - b);
   const qAt = step => { let hit; for (const s of qSteps) { if (s <= step) hit = s; else break; } return hit == null ? null : qByStep.get(hit); };
+  const nRows = Math.max(d.sample_prompts.length, ...d.samples.map(s => s.prompt + 1), 0);
+  // [prompt][step] -> {path, cap} | null, for the lightbox's arrow keys
+  const cells = Array.from({ length: nRows }, (_, i) => steps.map(step => {
+    const path = (byStep.get(step) || [])[i];
+    return path ? { path, cap: `${label(step)} · ${d.sample_prompts[i] || ""}` } : null;
+  }));
+  return { byStep, steps, finalStep, label, qByStep, qAt, cells };
+}
+function renderSheet(d) {
+  const t = sampleTable(d);
+  const { byStep, steps, finalStep, label, qByStep, qAt } = t;
+  $("#sheet-hint").textContent = steps.length ? `열 = step, 행 = 샘플 프롬프트. 클릭하면 크게 보고 ← → ↑ ↓로 넘겨봐요.` : "";
+  const q0 = qByStep.get(0);
   const qLine = step => {
     const q = qAt(step);
     if (!q) return "";
@@ -814,11 +827,49 @@ function renderSheet(d) {
   $("#sheet").innerHTML = steps.map(step => `
     <div class="sheet-col ${step === finalStep ? "best" : ""}">
       <div class="sc-step">${label(step)}${qLine(step)}</div>
-      ${(byStep.get(step) || []).map((p, i) => p ? `<img src="${thumb(p, 480)}" data-full="${esc(p)}" data-cap="${esc(`${label(step)} · ${d.sample_prompts[i] || ""}`)}" alt="">` : "").join("")}
+      ${(byStep.get(step) || []).map((p, i) => p ? `<img src="${thumb(p, 480)}" data-r="${i}" data-c="${steps.indexOf(step)}" alt="">` : "").join("")}
     </div>`).join("") || `<div class="empty small">샘플 프롬프트가 있으면 학습 중 주기적으로 여기에 쌓여요.</div>`;
   const body = $("#sheet");
   body.scrollLeft = body.scrollWidth;
-  $$("#sheet img").forEach(img => img.addEventListener("click", () => openLightbox(img.dataset.full, img.dataset.cap)));
+  $$("#sheet img").forEach(img => img.addEventListener("click", () => openCell(t, +img.dataset.r, +img.dataset.c)));
+}
+function openCell(t, r, c, ref = null) {
+  const cell = t.cells[r][c];
+  openLightbox(cell.path, cell.cap, { cells: t.cells, r, c, ref });
+}
+// results: every step's samples side by side, bigger than the monitor's sheet. A column heading
+// sets the reference step that Space flips to in the lightbox (flicker comparison).
+function renderGallery(d) {
+  const box = $("#re-gal");
+  if (S.galRun !== d.name) { S.galRun = d.name; S.galRef = null; S.galSig = null; }
+  // the results view refreshes every few seconds: rebuild only when something shown changed
+  const sig = [d.samples.length, (d.quality || []).length, d.status?.phase, d.status?.best_step, S.galRef].join("|");
+  if (S.galSig === sig) return;
+  const fresh = S.galSig == null;
+  S.galSig = sig;
+  const t = sampleTable(d);
+  if (!t.steps.length) {
+    box.innerHTML = `<div class="empty small">샘플 프롬프트가 있으면 학습 중 step마다 쌓여서, 여기서 모든 step을 나란히 비교할 수 있어요.</div>`;
+    return;
+  }
+  const ref = t.steps.includes(S.galRef) ? t.steps.indexOf(S.galRef) : null;
+  const head = t.steps.map((step, c) => {
+    const q = t.qAt(step);
+    const score = q ? `<span class="gs">${q.likeness != null ? `닮음 <b>${q.likeness.toFixed(2)}</b> ` : ""}준수 <b>${q.adherence.toFixed(1)}</b></span>` : "";
+    return `<th class="${step === t.finalStep ? "top" : ""}${c === ref ? " ref" : ""}" data-step="${step}" title="눌러서 기준 step으로 정해요 (크게 보기에서 Space로 번갈아 비교)">
+      <b>${esc(t.label(step))}</b>${score}${c === ref ? `<em class="tag">기준</em>` : ""}</th>`;
+  }).join("");
+  const rows = t.cells.map((row, r) => `<tr><td class="rowh" title="${esc(d.sample_prompts[r] || "")}">프롬프트 ${r + 1}</td>${row.map((cell, c) =>
+    `<td class="${t.steps[c] === t.finalStep ? "top" : ""}${c === ref ? " ref" : ""}">${cell ? `<img loading="lazy" src="${thumb(cell.path, 640)}" data-r="${r}" data-c="${c}" alt="">` : ""}</td>`).join("")}</tr>`).join("");
+  const x = box.scrollLeft, y = box.scrollTop;
+  box.innerHTML = `<table><thead><tr><th></th>${head}</tr></thead><tbody>${rows}</tbody></table>`;
+  if (!fresh) { box.scrollLeft = x; box.scrollTop = y; }  // a new run starts at the base column
+  $$("#re-gal th[data-step]").forEach(th => th.addEventListener("click", () => {
+    const s = +th.dataset.step;
+    S.galRef = S.galRef === s ? null : s;
+    renderGallery(S.detail);
+  }));
+  $$("#re-gal img").forEach(img => img.addEventListener("click", () => openCell(t, +img.dataset.r, +img.dataset.c, ref)));
 }
 function renderContinue(d, st) {
   const box = $("#re-continue");
@@ -944,8 +995,14 @@ function renderResults() {
   renderContinue(d, st);
   const mode = segValue("re-mode") || "samples";
   $("#re-grid").hidden = mode !== "samples";
+  $("#re-gal").hidden = mode !== "gallery";
   $("#re-cmp").hidden = mode !== "compare";
   if (mode === "compare") { renderCompare(d); return; }
+  if (mode === "gallery") {
+    $("#re-cap").textContent = d.samples.length ? "열 제목을 누르면 기준 step, 이미지를 누르면 크게 보며 ← → step · ↑ ↓ 프롬프트 · Space 기준과 번갈아 보기" : "";
+    renderGallery(d);
+    return;
+  }
   const steps = [...new Set(d.samples.map(s => s.step))].sort((a, b) => a - b);
   const last = steps[steps.length - 1];
   const loraLabel = st.phase === "done" ? `LoRA 추천 파일 (step ${st.best_step})` : `LoRA (step ${last})`;
@@ -1009,7 +1066,38 @@ async function refreshSystem() {
 }
 
 // ------------------------------------------------------------------ lightbox
-function openLightbox(path, cap) {
+// nav: {cells, r, c, ref} to step through a sample table with the arrow keys (cells[prompt][step];
+// ref = a step column Space flips to), or null for a single picture
+function openLightbox(path, cap, nav = null) {
+  S.lb = nav ? { ...nav, flip: false } : null;
+  showLightbox(path, cap);
+}
+function lbShow() {
+  const n = S.lb;
+  const flip = n.flip && n.ref != null && n.cells[n.r][n.ref];
+  const cell = flip ? n.cells[n.r][n.ref] : n.cells[n.r][n.c];
+  showLightbox(cell.path, (flip ? "기준 ▸ " : "") + cell.cap);
+}
+function lbMove(dr, dc) {
+  const n = S.lb;
+  let r = n.r, c = n.c;
+  do { r += dr; c += dc; } while (n.cells[r] && n.cells[r][c] === null);  // skip a missing picture
+  if (!n.cells[r] || n.cells[r][c] == null) return;
+  Object.assign(n, { r, c, flip: false });
+  lbShow();
+}
+document.addEventListener("keydown", e => {
+  if ($("#lightbox").hidden || !S.lb) return;
+  const k = e.key;
+  if (k === "ArrowLeft") lbMove(0, -1);
+  else if (k === "ArrowRight") lbMove(0, 1);
+  else if (k === "ArrowUp") lbMove(-1, 0);
+  else if (k === "ArrowDown") lbMove(1, 0);
+  else if (k === " " && S.lb.ref != null) { S.lb.flip = !S.lb.flip; lbShow(); }
+  else return;
+  e.preventDefault();
+});
+function showLightbox(path, cap) {
   // captions are "label · prompt": keep the label and the prompt's opening words on one line,
   // the whole prompt on hover (sample prompts can run to hundreds of words)
   const text = cap || "";
@@ -1019,6 +1107,9 @@ function openLightbox(path, cap) {
   $("#lb-img").src = full(path);
   $("#lb-cap").textContent = prompt ? `${label} · ${head}` : label;
   $("#lb-cap").title = text;
+  const n = S.lb;
+  $("#lb-nav").hidden = !n;
+  if (n) $("#lb-nav").textContent = `← → step · ↑ ↓ 프롬프트` + (n.ref != null ? ` · Space 기준과 번갈아 보기` : "");
   $("#lightbox").hidden = false;
 }
 $("#lightbox").addEventListener("click", () => ($("#lightbox").hidden = true));
