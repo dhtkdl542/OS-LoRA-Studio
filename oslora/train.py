@@ -5,6 +5,7 @@ Writes into ``<output_dir>/<name>/``:
 Create a file named STOP in that folder to stop gracefully (best weights are still saved).
 """
 
+import contextlib
 import copy
 import gc
 import json
@@ -370,6 +371,12 @@ class Trainer:
             p.requires_grad_(True)
         count = sum(p.numel() for p in params)
         self.rl.log(f"LoRA: {len(self.net.modules)}개 레이어, rank {n.rank}, alpha {n.alpha}, 파라미터 {count / 1e6:.1f}M")
+        self.adapter = None
+        if (getattr(n, "training_adapter", "") or "").strip():  # before the offload and swap: they skip it
+            from .adapter import TrainingAdapter
+
+            self.adapter = TrainingAdapter(self.dit, n.training_adapter.strip(), n.training_adapter_strength,
+                                           self.model.lora_prefix, device=self.device, log=self.rl.log)
         self.offload = self.model.block_offload(self.dit, log=self.rl.log)
         t = cfg.train
         if t.optimizer == "adamw8bit":
@@ -387,6 +394,10 @@ class Trainer:
                 self.rl.log(f"샘플·품질 확인은 {os.path.basename(inf)}로 그려요 (RAM에 대기, 그릴 때만 GPU로 교체)")
             else:
                 self.rl.log(f"⚠ 추론용 DiT 파일이 없어서 샘플도 학습 모델로 그려요: {inf}")
+
+    def plain(self):
+        """The model as people generate with it: the training adapter (if any) off."""
+        return self.adapter.off() if getattr(self, "adapter", None) else contextlib.nullcontext()
 
     # ------------------------------------------------------------------ probes
     def _predict(self, latent, t: float, noise, text):
@@ -424,9 +435,10 @@ class Trainer:
             key = "leak_" + __import__("hashlib").sha1(f"{tag}|{prompt}".encode()).hexdigest()[:16]
             lat = self.cache.get_latent(key)
             if lat is None:
-                lat = self.model.sample(self.dit, self.text[prompt], self.text[""], LEAK_RES, LEAK_RES,
-                                        steps=self.model.base_sample_steps, cfg=self.model.base_sample_cfg, seed=i,
-                                        distilled=False)[0]
+                with self.plain():
+                    lat = self.model.sample(self.dit, self.text[prompt], self.text[""], LEAK_RES, LEAK_RES,
+                                            steps=self.model.base_sample_steps, cfg=self.model.base_sample_cfg, seed=i,
+                                            distilled=False)[0]
                 self.cache.put_latent(key, lat)
             base_imgs.append(lat)
             for t in LEAK_T:
@@ -810,6 +822,7 @@ class Trainer:
             "oslora_trigger": self.cfg.dataset.trigger,
             "oslora_resolution": self.cfg.dataset.resolution,
             "oslora_name": self.cfg.name,
+            "ss_training_adapter": os.path.basename(self.cfg.network.training_adapter or "") or "none",
         }
         meta.update(extra or {})
         self.net.save(path, meta)
@@ -824,7 +837,7 @@ class Trainer:
         if self.swap:
             self.swap.swap()
         try:
-            with self.using_ema():
+            with self.using_ema(), self.plain():
                 lats = [self.model.sample(self.dit, self.text[p], self.text[""], width, height, steps=steps,
                                           cfg=cfg_scale, seed=seeds[i], distilled=bool(self.swap))
                         for i, p in enumerate(prompts)]

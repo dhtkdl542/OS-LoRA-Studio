@@ -28,6 +28,7 @@ class LoRALinear(nn.Module):
         self.lora_up = nn.Linear(rank, out_f, bias=False)
         nn.init.kaiming_uniform_(self.lora_down.weight, a=math.sqrt(5))
         nn.init.zeros_(self.lora_up.weight)
+        self.lora_adapter = None  # a frozen training adapter (adapter.py), on while training only
 
     @property
     def in_features(self):
@@ -39,6 +40,9 @@ class LoRALinear(nn.Module):
 
     def forward(self, x):
         y = self.base(x)
+        a = self.lora_adapter
+        if a is not None and a.on:
+            y = y + a(x).to(y.dtype)
         if self.multiplier == 0.0:
             return y
         h = self.lora_down(self.dropout(x).to(self.lora_down.weight.dtype))
