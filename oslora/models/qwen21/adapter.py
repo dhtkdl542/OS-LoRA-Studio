@@ -292,6 +292,11 @@ class Qwen21Adapter(ModelAdapter):
     quality_steps = 8
     base_sample_steps = 25  # the base model is also sampled without guidance
     base_sample_cfg = 1.0
+    # a plain LoRA wobbles or collapses on 2.1 (Fizgig: likeness 77.4 with this adapter vs 55.8
+    # without); ours on Damdeari, 512 px / 500 steps: same likeness and val loss, leak 2.4x lower
+    training_adapter = ("ShootTheSound/Fizgig-Qwen-Image-2.1-Training-Adapter",
+                        "fizgig_qwen_image_2.1_training_adapter.safetensors",
+                        "f55fcaa0cb9e3705d331a1268bc3dd4cc4e02d51")
 
     def text_encoder(self, path, log=print):
         return Qwen21TextEncoder(path, log=log)

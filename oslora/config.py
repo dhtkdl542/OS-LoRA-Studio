@@ -137,7 +137,8 @@ class NetworkConfig:
     rank_dropout: float = 0.0
     # "all" = every linear in the 42 main blocks; "attn" = qkv/o only
     targets: str = "all"
-    # a frozen LoRA in the model while training only (adapter.py): "" = none, else its file
+    # a frozen LoRA in the model while training only (adapter.py): "" = none, "auto" = the model's
+    # recommended one (new runs; a run from before this field keeps "" on resume), else its file
     training_adapter: str = ""
     training_adapter_strength: float = 1.0
 

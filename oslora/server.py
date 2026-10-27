@@ -834,6 +834,7 @@ def train_start(req: TrainReq):
     cfg.dataset.multires = [r for r in (512, 768) if r < req.resolution] if req.multires else []
     cfg.save_keep, cfg.cleanup = max(0, int(req.save_keep)), bool(req.cleanup)
     cfg.network.rank, cfg.network.alpha = req.rank, req.alpha
+    cfg.network.training_adapter = "auto"  # the model's recommended training adapter, if it has one
     ms = req.max_steps.strip()
     cfg.train.max_steps = "auto" if ms in ("", "auto") else int(ms)
     cfg.train.ema_decay, cfg.train.optimizer, cfg.train.lr = req.ema, req.optimizer, req.lr

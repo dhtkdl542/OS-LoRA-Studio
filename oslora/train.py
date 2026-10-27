@@ -371,12 +371,16 @@ class Trainer:
             p.requires_grad_(True)
         count = sum(p.numel() for p in params)
         self.rl.log(f"LoRA: {len(self.net.modules)}개 레이어, rank {n.rank}, alpha {n.alpha}, 파라미터 {count / 1e6:.1f}M")
-        self.adapter = None
-        if (getattr(n, "training_adapter", "") or "").strip():  # before the offload and swap: they skip it
+        self.adapter, self.adapter_file = None, ""
+        want = (getattr(n, "training_adapter", "") or "").strip()
+        if want == "auto":
+            want = self.model.training_adapter_path(log=self.rl.log) or ""
+        if want:  # before the offload and swap: they skip it
             from .adapter import TrainingAdapter
 
-            self.adapter = TrainingAdapter(self.dit, n.training_adapter.strip(), n.training_adapter_strength,
+            self.adapter = TrainingAdapter(self.dit, want, n.training_adapter_strength,
                                            self.model.lora_prefix, device=self.device, log=self.rl.log)
+            self.adapter_file = want
         self.offload = self.model.block_offload(self.dit, log=self.rl.log)
         t = cfg.train
         if t.optimizer == "adamw8bit":
@@ -822,7 +826,7 @@ class Trainer:
             "oslora_trigger": self.cfg.dataset.trigger,
             "oslora_resolution": self.cfg.dataset.resolution,
             "oslora_name": self.cfg.name,
-            "ss_training_adapter": os.path.basename(self.cfg.network.training_adapter or "") or "none",
+            "ss_training_adapter": os.path.basename(getattr(self, "adapter_file", "")) or "none",
         }
         meta.update(extra or {})
         self.net.save(path, meta)

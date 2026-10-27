@@ -35,6 +35,19 @@ class ModelAdapter:
     base_sample_cfg: float = 3.0
     # DiT blocks kept in RAM and swapped in per forward (models that don't fit 16 GB otherwise)
     swap_blocks: int = 0
+    # a frozen LoRA in the model while training (adapter.py), for models a plain LoRA does not
+    # train well on: (Hugging Face repo, file, revision); None = no such need
+    training_adapter: Optional[tuple] = None
+
+    def training_adapter_path(self, log=print) -> Optional[str]:
+        """The recommended training adapter's file (fetched once into the Hugging Face cache)."""
+        if not self.training_adapter:
+            return None
+        from huggingface_hub import hf_hub_download
+
+        repo, name, rev = self.training_adapter
+        log(f"training adapter 준비: {repo}/{name}")
+        return hf_hub_download(repo, name, revision=rev)
 
     # -- loaders ------------------------------------------------------------------------
     def text_encoder(self, path: str, log=print):

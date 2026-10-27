@@ -92,6 +92,7 @@ run.bat
 - 같은 형식(int8 ConvRot)의 다른 재배포본·파생 모델(예: Turbo 머지)도 쓸 수 있어요.
 - Qwen Image 2.1은 Texture-Fix VAE를 권장해요. 인코딩 결과는 공식 VAE와 똑같고(학습에 영향 없음), 샘플에 생기는 잔 격자 무늬만 사라져요.
 - 샘플용 DiT를 비우면 샘플도 학습용 모델로 그려요.
+- Qwen Image 2.1은 새 학습을 시작하면 [Fizgig의 training adapter](https://huggingface.co/ShootTheSound/Fizgig-Qwen-Image-2.1-Training-Adapter)(84 MB)를 처음 한 번 자동으로 받아, 학습하는 동안에만 모델에 고정해서 끼워요. 단독 LoRA는 학습 중간부터 얼굴이 흔들리거나 무너지기 쉬워서예요. 샘플·품질 확인·저장한 LoRA에는 들어가지 않으니, 결과물은 일반 Qwen 2.1에서 그대로 써요.
 - 토크나이저·설정 파일(`models/<모델>/`)과 평가 모델(CLIP, 얼굴 인식 → `models/eval/`)은 처음 쓸 때 자동으로 받아요.
 
 ## 사용 방법
@@ -221,6 +222,7 @@ oslora/
 - MOSS-Image 모델·원본 코드, Qwen3.5: Apache-2.0
 - Krea 2: Krea의 모델 라이선스
 - Qwen Image 2.1 가중치: Qwen Research License / 이식한 diffusers 코드: Apache-2.0
+- Qwen Image 2.1 training adapter (ShootTheSound/Fizgig): 라이선스 표기 없음 (저장소에 포함하지 않고 처음 쓸 때 받음)
 - 얼굴 인식 InsightFace buffalo_l (ArcFace): 비상업적 연구용 라이선스 (저장소에 포함하지 않고 처음 쓸 때 받음)
 - 얼굴 검출 YuNet (OpenCV Zoo): Apache-2.0 / CLIP ViT-L/14 (OpenAI): MIT
 - `oslora/photoreal/`: ComfyUI-PhotoReal (MIT)

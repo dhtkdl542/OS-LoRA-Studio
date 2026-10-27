@@ -147,6 +147,7 @@ def make_config(item: Dict):
     steps = item.get("steps", 600)
     cfg.train.max_steps = steps
     cfg.train.lr = p["lr"]
+    cfg.network.training_adapter = "auto"
     cfg.train.seed = item.get("seed", cfg.train.seed)  # runs queued before per-dataset seeds: 42
     cfg.autopilot.enabled = p["autopilot"]
     cfg.mask.enabled = bool(p.get("mask"))
