@@ -169,9 +169,13 @@ SUBJECT_RULES = {
     "general": "",
     "character": (
         " The person is a specific recurring character: refer to them only as 'a woman', 'a man' or "
-        "'a person'. Do NOT describe their face shape, eye shape or color, skin tone, ethnicity, age, or "
-        "other innate identifying features, and do not guess their name. Do describe hairstyle, makeup, "
-        "clothing, accessories, pose, expression and everything around them."
+        "'a person', and do not guess their name. Do NOT describe their face at all: no face shape, eyes, "
+        "eyebrows, eyelashes, nose, lips, makeup, blush, cheeks, complexion, skin tone, freckles or moles, "
+        "ethnicity or age. Whatever the caption names is learned as the prompt's job, so the face must stay "
+        "unnamed to be learned as the character's own. Always state which way the head is turned (facing "
+        "the camera, three-quarter left or right, profile, tilted up or down) and where the eyes look (at "
+        "the camera or away, and where). Do describe the hairstyle, expression, clothing, accessories, pose "
+        "and everything around them."
     ),
     "style": (
         " Describe only the content of the image. Do not mention the art style, medium, rendering, "
@@ -422,6 +426,16 @@ def caption_folder(folder: str, model_key: str, style: str, subject: str, trigge
         lead = aug_lead(name) if name.startswith(AUG_PREFIX) else ""
         return f"{lead} {with_trigger(text)}".strip()
 
+    # an overwrite never deletes: each old caption moves to excluded/캡션백업_<time>/ right before its new one
+    backup = os.path.join(folder, "excluded", time.strftime("캡션백업_%Y%m%d-%H%M"))
+
+    def retire(path):
+        base = os.path.splitext(path)[0]
+        for ext in (caption_ext, CAPTIONS_EXT):
+            if os.path.isfile(base + ext):
+                os.makedirs(backup, exist_ok=True)
+                os.replace(base + ext, os.path.join(backup, os.path.basename(base) + ext))
+
     t0, failed = time.time(), []
     try:
         for i, path in enumerate(todo):
@@ -436,10 +450,12 @@ def caption_folder(folder: str, model_key: str, style: str, subject: str, trigge
                         failed.append(os.path.basename(path))
                         continue
                     variants = {k: finish(path, v) for k, v in variants.items() if v}
+                    retire(path)
                     save_caption_variants(path, variants, caption_ext, model=model_key)
                     text = variants.get("long", "")
                 else:
                     text = finish(path, cap.caption(im, instruction))
+                    retire(path)
                     with open(os.path.splitext(path)[0] + caption_ext, "w", encoding="utf-8") as f:
                         f.write(text)
             eta = (time.time() - t0) / (i + 1) * (len(todo) - i - 1)
