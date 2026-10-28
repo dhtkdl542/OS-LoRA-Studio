@@ -11,6 +11,9 @@ and turns that into a short list of findings, each with an optional fix:
                              (~20% of the dataset, not one per photo)
     too many face crops   -> keep the best ~20% (likeness, detail gained, sharpness), move the
                              rest to excluded/크롭과다/: each crop repeats its original's face
+    very large originals  -> shrink by area to ~2 MP (Fizgig's Image Prep: aspect kept, nothing
+                             cropped); the full-size file moves to excluded/원본/, and face crops
+                             are still cut from it
 
 Face crops are paired with their originals (by name, else by the face) so the holdout never
 splits a pair and the step count treats a crop as half an image.
@@ -32,7 +35,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE = os.path.join(ROOT, "cache", "diagnosis")
 EXCLUDED = "excluded"
 REASON_DIRS = {"look": "다른사람같음", "duplicate": "중복", "blurry": "흐림", "crop": "크롭과다", "aug": "변형과다",
-               "aug_rebalance": "변형정리", "recrop": "크롭정리"}
+               "aug_rebalance": "변형정리", "recrop": "크롭정리", "resize": "원본"}
+# training reads at most ~1 MP (1024 px); a 2880x3840 PNG (11 MP, ~15 MB) is decoded in full for
+# every check-up, thumbnail, caption and mask. Images above LARGE_MP are offered a shrink to PREP_MP.
+PREP_MP = 2.0
+LARGE_MP = 3.0
 REPORT_VERSION = 3  # 2: face crops paired with their originals, 3: augmented copies
 
 
@@ -212,13 +219,26 @@ def _findings(items: List[Dict], resolution: int) -> List[Dict]:
     if bad:
         add("broken", "bad", f"열 수 없는 이미지 {len(bad)}장", "파일이 깨졌거나 이미지가 아니에요. 확인 후 지워주세요.", bad)
 
+    large = [it for it in items if "error" not in it and not it.get("crop") and it["w"] * it["h"] > LARGE_MP * 1e6]
+    if large:
+        big = max(large, key=lambda it: it["w"] * it["h"])
+        mb = np.mean([os.path.getsize(it["path"]) for it in large if os.path.isfile(it["path"])] or [0]) / 1e6
+        add("large", "info", f"아주 큰 이미지 {len(large)}장 (예: {big['w']}×{big['h']})",
+            f"학습은 {resolution}px 정도로 줄여서 쓰는데, 장당 약 {mb:.0f}MB짜리 파일을 점검·썸네일·캡션·마스크 때마다 "
+            f"통째로 열어서 느려요. 비율은 그대로 두고 면적 {PREP_MP:g}MP(3:4라면 약 1224×1632)로 줄여요. 원본은 "
+            f"excluded/원본 폴더로 옮기고(지우지 않아요), 얼굴 크롭은 앞으로도 그 원본에서 잘라서 화질 손해가 없어요.",
+            [it["path"] for it in large], "resize", f"{len(large)}장 줄이기")
+
     missing = [it["path"] for it in ok if not it.get("caption_words")]
     if missing:
         add("caption", "bad", f"캡션 없는 이미지 {len(missing)}장",
             "캡션이 없으면 학습에 트리거 워드만 쓰여서 옷·배경까지 캐릭터로 외워버려요.", missing,
             "caption", "이 이미지들만 자동 캡션")
 
-    sims = [it["face"]["sim"] for it in ok if it.get("face", {}).get("sim") is not None]
+    # a face crop repeats its original's face: the original is judged, not the crop (a tight
+    # close-up often scores lower, and excluding it only made the close-up check cut it again)
+    judged = [it for it in ok if not (it.get("crop") and it.get("source"))]
+    sims = [it["face"]["sim"] for it in judged if it.get("face", {}).get("sim") is not None]
     if len(sims) >= 6:
         # ArcFace: the same person across photos is ~0.5-0.85, different people < ~0.35.
         # Clear mismatches (< 0.45 and a statistical outlier) get a fix; milder outliers
@@ -226,8 +246,8 @@ def _findings(items: List[Dict], resolution: int) -> List[Dict]:
         q1, med, q3 = np.percentile(sims, [25, 50, 75])
         stat_cut = max(med - 1.5 * (q3 - q1), 0.25)
         hard_cut = min(stat_cut, 0.45)
-        odd = [it["path"] for it in ok if it.get("face", {}).get("sim", 1) < hard_cut]
-        mild = [it["path"] for it in ok if hard_cut <= it.get("face", {}).get("sim", 1) < stat_cut]
+        odd = [it["path"] for it in judged if it.get("face", {}).get("sim", 1) < hard_cut]
+        mild = [it["path"] for it in judged if hard_cut <= it.get("face", {}).get("sim", 1) < stat_cut]
         if odd:
             add("look", "warn", f"다른 사람처럼 보이는 이미지 {len(odd)}장",
                 f"얼굴 인식 닮음이 {hard_cut:.2f} 미만이에요 (데이터셋 중간값 {med:.2f}). 다른 사람이거나 얼굴이 "
@@ -297,10 +317,10 @@ def _findings(items: List[Dict], resolution: int) -> List[Dict]:
     has_crop = {it.get("source") for it in crops} | {it.get("source") for it in augs}
 
     def zooms_in(it):
-        return _face_crop_box(it) is not None
+        return _face_crop_box(_full_size(it)) is not None
 
     croppable = [it for it in faces if it["name"] not in has_crop and zooms_in(it)
-                 and not os.path.isfile(_crop_path(it["path"]))]
+                 and not os.path.isfile(_crop_path(it["path"])) and not _retired_crop(it["path"])]
     want = target - len(crops)
     if croppable and want > 0:
         def gain(it):  # how much a crop enlarges the face
@@ -323,7 +343,8 @@ def _findings(items: List[Dict], resolution: int) -> List[Dict]:
     # crops made with the old hair-to-collarbone framing: the face is a third of the picture, which
     # barely zooms in on a large source; offer to cut them again as close-ups
     loose = [it for it in crops if "face" in it and it["face"]["box"][3] / it["h"] < LOOSE_CROP
-             and "face" in by_name.get(it.get("source", ""), {}) and _face_crop_box(by_name[it["source"]]) is not None]
+             and "face" in by_name.get(it.get("source", ""), {})
+             and _face_crop_box(_full_size(by_name[it["source"]])) is not None]
     if loose:
         add("recrop", "info", f"얼굴 크롭 {len(loose)}장이 느슨해요",
             "얼굴이 크롭의 3분의 1 정도라 머리부터 쇄골까지 담겨서, 큰 사진에서는 거의 확대가 안 돼요. 원본에서 얼굴이 "
@@ -397,6 +418,56 @@ def _crop_path(path: str) -> str:
     return os.path.join(d, "FaceCrop_" + os.path.splitext(n)[0] + ".png")
 
 
+def _retired_crop(path: str) -> bool:
+    """The original's face crop was taken out (any excluded/ subfolder, by the check-up or by
+    hand): don't offer to cut it again -- the check-up would otherwise go round in circles."""
+    d, n = os.path.split(_crop_path(path))
+    ex = os.path.join(d, EXCLUDED)
+    return os.path.isdir(ex) and any(os.path.isfile(os.path.join(ex, sub, n)) for sub in os.listdir(ex))
+
+
+def _full_size(it: Dict) -> Dict:
+    """An analysed image as its full-size original when it was shrunk (excluded/원본/<name>):
+    the face box scaled to it and ``full`` naming the file, so crops keep the original detail."""
+    d, n = os.path.split(it["path"])
+    full = os.path.join(d, EXCLUDED, REASON_DIRS["resize"], n)
+    if "face" not in it or not os.path.isfile(full):
+        return it
+    with Image.open(full) as im:
+        W, H = im.size
+        if im.getexif().get(0x0112, 1) in (5, 6, 7, 8):  # stored rotated
+            W, H = H, W
+    sx, sy = W / it["w"], H / it["h"]
+    x, y, w, h = it["face"]["box"]
+    return dict(it, w=W, h=H, full=full, face=dict(it["face"], box=[x * sx, y * sy, w * sx, h * sy]))
+
+
+def _shrink(path: str, folder: str, mp: float = PREP_MP) -> bool:
+    """Scale an image down to ``mp`` megapixels in place (aspect kept); the original moves to
+    excluded/원본/ first. Its captions stay with the image. False if it is not larger."""
+    with Image.open(path) as im:
+        fmt = im.format or "PNG"
+        im = ImageOps.exif_transpose(im)
+        w, h = im.size
+        s = (mp * 1e6 / (w * h)) ** 0.5
+        if s >= 1:
+            return False
+        if im.mode not in ("RGB", "RGBA", "L"):
+            im = im.convert("RGBA" if "A" in im.getbands() else "RGB")
+        small = im.resize((round(w * s), round(h * s)), Image.LANCZOS, reducing_gap=3.0)
+    tmp = path + ".shrink"
+    small.save(tmp, format=fmt, **({"quality": 95} if fmt == "JPEG" else {}))
+    dst_dir = os.path.join(folder, EXCLUDED, REASON_DIRS["resize"])
+    os.makedirs(dst_dir, exist_ok=True)
+    dst, n = os.path.join(dst_dir, os.path.basename(path)), 1
+    while os.path.exists(dst):
+        stem, ext = os.path.splitext(os.path.basename(path))
+        dst, n = os.path.join(dst_dir, f"{stem}_{n}{ext}"), n + 1
+    shutil.move(path, dst)
+    os.replace(tmp, path)
+    return True
+
+
 # face crops frame the face like a close-up (the user's hand-made crops): the detected face fills
 # about 60 % of the crop (padding 0.3 -> a box 1.6x the face). Looser framings only when the source
 # is too small for the crop to reach 768 px (then 512 px), so it isn't blown up much in training.
@@ -434,12 +505,14 @@ def _crop_box(it: Dict, padding: float = 0.5, min_side: int = 512):
 
 def _write_crop(it: Dict) -> bool:
     """Cut the close-up of an analysed original next to it (``FaceCrop_<stem>.png``, at most
-    1024 px); False if there is no worthwhile box or the file exists."""
+    1024 px), from its full-size original if it was shrunk; False if there is no worthwhile box
+    or the file exists."""
+    it = _full_size(it)
     box = _face_crop_box(it)
     out = _crop_path(it["path"])
     if box is None or os.path.isfile(out):
         return False
-    with Image.open(it["path"]) as im:
+    with Image.open(it.get("full", it["path"])) as im:
         crop = ImageOps.exif_transpose(im).convert("RGB").crop(box)
     if crop.width > 1024:
         crop = crop.resize((1024, 1024), Image.LANCZOS)
@@ -487,7 +560,7 @@ def fix(folder: str, action: str, files: List[str]) -> Dict:
         made = 0
         for p in paths:
             src = by_name.get(by_name.get(os.path.basename(p), {}).get("source", ""))
-            if not src or "face" not in src or _face_crop_box(src) is None:
+            if not src or "face" not in src or _face_crop_box(_full_size(src)) is None:
                 continue
             _move_with_captions(p, dst_dir)
             made += _write_crop(src)
@@ -502,6 +575,10 @@ def fix(folder: str, action: str, files: List[str]) -> Dict:
             if it and "face" in it:
                 made += _write_crop(it)
         return {"done": made, "message": f"얼굴 클로즈업 {made}장을 만들었어요. 캡션이 없으니 '캡션 없는 이미지'를 자동 캡션하세요"}
+    if action == "resize":
+        done = sum(_shrink(p, folder) for p in paths)
+        return {"done": done, "message": f"{done}장을 {PREP_MP:g}MP로 줄였어요 (원본은 '{EXCLUDED}/{REASON_DIRS['resize']}', "
+                                         "얼굴 크롭은 앞으로도 원본에서 잘라요)"}
     if action == "augment":
         from .augment import make_copies
 

@@ -218,6 +218,7 @@ async function applyFix(f) {
     return;
   }
   const what = f.fix === "facecrop" ? `${f.files.length}장에서 얼굴 클로즈업 사본을 만들까요? (원본은 그대로)`
+    : f.fix === "resize" ? `${f.files.length}장을 면적 2MP로 줄일까요? (비율 그대로, 원본은 excluded/원본 폴더로 옮겨요. 얼굴 크롭은 앞으로도 원본에서 잘라요)`
     : f.fix === "augment" ? `${f.files.length}장에 화질 변형(노이즈·흔들림·저해상도·초점 흐림·필름·폰 셀카·밤 셀카, 절반은 색 필터도)을 건 사본을 만들까요? (원본은 그대로, 캡션 맨 앞에 효과를 적어요)`
     : `${f.files.length}장을 excluded 폴더로 옮길까요? (지우지 않아요, 나중에 다시 꺼낼 수 있어요)`;
   if (!confirm(what)) return;
