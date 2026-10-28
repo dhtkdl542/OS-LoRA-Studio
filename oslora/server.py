@@ -671,6 +671,7 @@ class TrainReq(BaseModel):
     caption_dropout: float = 0.05
     photo_texture: bool = False  # a third of the steps see the image with a natural photo tone + phone noise
     masked: bool = False  # masked training: the loss counts the person, the background at 0.1 (masking.py)
+    training_adapter: bool = True  # the model's recommended training adapter, if it has one (adapter.py)
     save_keep: int = 3  # regular checkpoints kept (0 = all)
     cleanup: bool = True  # drop resume states / quality renders when done
     int8_compute: bool = False  # int8 tensor cores for the frozen weights (faster, experimental)
@@ -834,7 +835,7 @@ def train_start(req: TrainReq):
     cfg.dataset.multires = [r for r in (512, 768) if r < req.resolution] if req.multires else []
     cfg.save_keep, cfg.cleanup = max(0, int(req.save_keep)), bool(req.cleanup)
     cfg.network.rank, cfg.network.alpha = req.rank, req.alpha
-    cfg.network.training_adapter = "auto"  # the model's recommended training adapter, if it has one
+    cfg.network.training_adapter = "auto" if req.training_adapter else ""
     ms = req.max_steps.strip()
     cfg.train.max_steps = "auto" if ms in ("", "auto") else int(ms)
     cfg.train.ema_decay, cfg.train.optimizer, cfg.train.lr = req.ema, req.optimizer, req.lr
