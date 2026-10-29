@@ -58,12 +58,31 @@ PHRASES: Dict[str, str] = {
               "crisp, sharp detail in her hair and skin."),
     "hdr": ("An over-processed phone photo with heavy HDR and over-sharpening: bright halos along the edges, crunchy "
             "detail in her hair and skin, and boosted local contrast."),
+    # light colour, optics, partial light and other media: not one more global tone / noise look
+    "tungsten": ("A photo under warm tungsten bulb light indoors: a strong orange-amber cast over her skin and hair, "
+                 "brighter near the lamp side, with cooler, darker shadows on the far side."),
+    "fluorescent": ("A photo under flat fluorescent office light: a sickly green-cyan cast, pale skin tones, flat "
+                    "shadowless lighting and slightly dull colors."),
+    "neon": ("A photo lit by colored neon signs at night: magenta-pink light falls on one side of her face and body "
+             "and cyan-blue light on the other, over a dark background."),
+    "lens": ("A photo taken with a cheap wide-angle lens: the edges bulge outward with barrel distortion, red and blue "
+             "color fringes appear along high-contrast edges near the corners, and a heavy dark vignette closes in."),
+    "flare": ("A photo shot into the sun with lens flare: a bright starburst glare in one corner, a streak and a row of "
+              "colored ghost circles across the frame, and a washed-out, low-contrast haze over that side."),
+    "shadow": ("A photo with hard patterned shadows: sunlight through window blinds or leaves throws sharp stripes and "
+               "patches of shadow across her face, body and the background."),
+    "screen": ("A photo of a computer screen taken with a phone: faint moire ripple patterns, a slightly soft focus, a "
+               "cool blue screen cast and a pale glare reflection across part of the image."),
+    "cctv": ("A grainy security-camera still: low resolution, a slightly bulging wide-angle view, washed-out greenish "
+             "colors, harsh contrast and noisy, smeared detail on her face."),
+    "print": ("A scanned printed photograph: faded, slightly yellowed colors, a faint paper texture and fine "
+              "printing grain over the whole image, with soft, low-contrast shadows."),
 }
 # blur / softening effects alternate with ones that keep detail, so the first copies of a dataset
 # spread over both (7 copies -> 2 soft ones)
-KINDS = ["grain", "flash", "motion", "hdr", "film", "lightleak", "lowres", "harsh", "selfie", "overexposed", "soft",
-         "nightselfie"]
-BLUR_KINDS = {"motion", "lowres", "soft", "selfie", "nightselfie"}
+KINDS = ["grain", "flash", "motion", "tungsten", "hdr", "neon", "lowres", "lens", "film", "shadow", "selfie",
+         "fluorescent", "lightleak", "screen", "harsh", "flare", "soft", "overexposed", "print", "nightselfie", "cctv"]
+BLUR_KINDS = {"motion", "lowres", "soft", "selfie", "nightselfie", "screen", "cctv"}
 BLUR_SHARE = 0.35  # at most about a third of a dataset's copies soften the image
 
 # colour filters (phone / SNS filter looks), stacked on every other copy
@@ -77,7 +96,9 @@ FILTER_PHRASES: Dict[str, str] = {
 FILTERS = list(FILTER_PHRASES)
 KIND_LABELS = {"grain": "노이즈", "motion": "흔들림", "lowres": "저해상도", "soft": "초점 흐림", "film": "필름",
                "selfie": "폰 셀카", "nightselfie": "밤 셀카", "flash": "플래시", "lightleak": "빛샘",
-               "overexposed": "과다 노출", "harsh": "강한 대비", "hdr": "폰 HDR 과보정"}
+               "overexposed": "과다 노출", "harsh": "강한 대비", "hdr": "폰 HDR 과보정", "tungsten": "텅스텐 조명",
+               "fluorescent": "형광등", "neon": "네온", "lens": "광각 렌즈", "flare": "렌즈 플레어",
+               "shadow": "그림자 무늬", "screen": "화면 촬영", "cctv": "CCTV", "print": "인쇄 사진 스캔"}
 FILTER_LABELS = {"bw": "흑백", "warm": "따뜻한 톤", "cool": "차가운 톤", "faded": "빛바램", "vivid": "쨍한"}
 
 
@@ -275,9 +296,166 @@ def _hdr(im: Image.Image, rng) -> Image.Image:
     return out.filter(ImageFilter.UnsharpMask(radius=1.5, percent=110, threshold=1))  # over-sharpened
 
 
+def _side_ramp(h: int, w: int, rng, power=(1.2, 1.8)) -> np.ndarray:
+    """0..1 ramp from a random side of the frame (1 on that side), shape (h, w, 1)."""
+    side = int(rng.integers(4))
+    t = np.linspace(1, 0, w if side < 2 else h, dtype=np.float32) ** rng.uniform(*power)
+    t = t if side % 2 == 0 else t[::-1]
+    g = np.broadcast_to(t[None, :] if side < 2 else t[:, None], (h, w))
+    return np.ascontiguousarray(g)[..., None]
+
+
+def _tungsten(im: Image.Image, rng) -> Image.Image:
+    a = np.asarray(im).astype(np.float32) / 255
+    h, w = a.shape[:2]
+    lamp = _side_ramp(h, w, rng, (0.8, 1.3))
+    warm = a * np.array([1.18, 0.92, 0.58], np.float32)            # orange-amber bulb white balance
+    cool = a * np.array([0.78, 0.84, 0.98], np.float32) * 0.82     # far side: cooler and darker
+    a = warm * (0.55 + 0.45 * lamp) + cool * (1 - lamp) * 0.45
+    return Image.fromarray(np.clip(a * 255, 0, 255).astype(np.uint8))
+
+
+def _fluorescent(im: Image.Image, rng) -> Image.Image:
+    a = np.asarray(im).astype(np.float32) / 255
+    g = a.mean(2, keepdims=True)
+    a = g + (a - g) * 0.72                                          # dull colour
+    a = 0.06 + a * 0.9                                              # flat, shadowless
+    a *= np.array([0.9, 1.06, 0.97], np.float32) * rng.uniform(0.98, 1.05)  # green-cyan cast
+    return Image.fromarray(np.clip(a * 255, 0, 255).astype(np.uint8))
+
+
+def _neon(im: Image.Image, rng) -> Image.Image:
+    a = np.asarray(im).astype(np.float32) / 255
+    h, w = a.shape[:2]
+    x = np.linspace(0, 1, w, dtype=np.float32)[None, :, None]
+    if rng.random() < 0.5:
+        x = 1 - x
+    pink, cyan = np.array([1.0, 0.25, 0.75], np.float32), np.array([0.2, 0.75, 1.0], np.float32)
+    light = pink * (1 - x) ** 1.5 + cyan * x ** 1.5
+    lum = a.mean(2, keepdims=True)
+    a = lum * light * 1.35 + a * 0.18                               # the scene lit by the coloured light only
+    return Image.fromarray(np.clip(a * 255, 0, 255).astype(np.uint8))
+
+
+def _barrel(a: np.ndarray, k: float, scale_rb: float = 0.0) -> np.ndarray:
+    """Barrel distortion (k > 0 bulges); with scale_rb the red / blue channels are scaled apart
+    (lateral chromatic aberration)."""
+    import cv2
+
+    h, w = a.shape[:2]
+    y, x = np.indices((h, w), dtype=np.float32)
+    nx, ny = (x - w / 2) / (w / 2), (y - h / 2) / (h / 2)
+    r2 = nx * nx + ny * ny
+    out = np.empty_like(a)
+    for c, s in zip(range(3), (1 + scale_rb, 1.0, 1 - scale_rb)):
+        f = (1 + k * r2) / (1 + k) * s
+        out[..., c] = cv2.remap(a[..., c], (nx * f * w / 2 + w / 2), (ny * f * h / 2 + h / 2),
+                                cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+    return out
+
+
+def _lens(im: Image.Image, rng) -> Image.Image:
+    a = np.asarray(im).astype(np.float32) / 255
+    h, w = a.shape[:2]
+    a = _barrel(a, rng.uniform(0.12, 0.2), rng.uniform(0.004, 0.007))
+    d = _radial(h, w, 0.5, 0.5)
+    a *= np.clip(1.15 - 0.75 * d ** 1.6, 0.25, 1)[..., None]        # heavy vignette
+    return Image.fromarray(np.clip(a * 255, 0, 255).astype(np.uint8))
+
+
+def _flare(im: Image.Image, rng) -> Image.Image:
+    a = np.asarray(im).astype(np.float32) / 255
+    h, w = a.shape[:2]
+    sx, sy = (rng.uniform(0.05, 0.25), rng.uniform(0.03, 0.2))
+    if rng.random() < 0.5:
+        sx = 1 - sx
+    y, x = np.ogrid[:h, :w]
+    dist = np.sqrt(((x / w - sx) * w / h) ** 2 + (y / h - sy) ** 2)
+    glare = np.exp(-dist / 0.12)[..., None] * np.array([1.0, 0.92, 0.75], np.float32)
+    veil = np.clip(1 - dist / 1.1, 0, 1)[..., None] * 0.35          # washed-out side
+    ghosts = np.zeros((h, w, 1), np.float32)
+    for k in range(int(rng.integers(3, 6))):                        # ghost circles along the line through the centre
+        t = rng.uniform(0.35, 1.5)
+        gx, gy = sx + (0.5 - sx) * t * 2, sy + (0.5 - sy) * t * 2
+        rad = rng.uniform(0.02, 0.06)
+        gd = np.sqrt(((x / w - gx) * w / h) ** 2 + (y / h - gy) ** 2)
+        ghosts += (np.clip(1 - np.abs(gd - rad * 0.7) / (rad * 0.5), 0, 1) * rng.uniform(0.08, 0.18))[..., None]
+    tint = np.array([rng.uniform(0.6, 1), rng.uniform(0.6, 1), rng.uniform(0.6, 1)], np.float32)
+    light = np.clip(glare * 1.2 + veil + ghosts * tint, 0, 1)
+    a = 1 - (1 - a) * (1 - light)                                   # screen blend
+    return Image.fromarray(np.clip(a * 255, 0, 255).astype(np.uint8))
+
+
+def _shadow(im: Image.Image, rng) -> Image.Image:
+    import cv2
+
+    a = np.asarray(im).astype(np.float32) / 255
+    h, w = a.shape[:2]
+    if rng.random() < 0.5:  # window blinds: tilted stripes
+        period = h * rng.uniform(0.06, 0.1)
+        ang = np.deg2rad(rng.uniform(-30, 30))
+        y, x = np.indices((h, w), dtype=np.float32)
+        phase = (y * np.cos(ang) + x * np.sin(ang)) / period
+        mask = (np.mod(phase, 1.0) < rng.uniform(0.4, 0.55)).astype(np.float32)
+    else:                   # leaves: blotches
+        small = (rng.random((h // 40 + 2, w // 40 + 2)) < 0.45).astype(np.float32)
+        mask = cv2.resize(small, (w, h), interpolation=cv2.INTER_CUBIC) > 0.5
+        mask = mask.astype(np.float32)
+    mask = cv2.GaussianBlur(mask, (0, 0), max(1.0, w * 0.002))      # hard but not aliased edges
+    lit = a * np.array([1.08, 1.04, 0.96], np.float32) * 1.08       # warm sunlit patches
+    dark = a * np.array([0.42, 0.45, 0.55], np.float32)             # bluish shade
+    a = lit * mask[..., None] + dark * (1 - mask[..., None])
+    return Image.fromarray(np.clip(a * 255, 0, 255).astype(np.uint8))
+
+
+def _screen(im: Image.Image, rng) -> Image.Image:
+    a = np.asarray(im.filter(ImageFilter.GaussianBlur(im.width * 0.0015))).astype(np.float32) / 255
+    h, w = a.shape[:2]
+    y, x = np.indices((h, w), dtype=np.float32) / max(h, w)
+    ang = rng.uniform(0, np.pi)
+    period = rng.uniform(0.012, 0.022)                              # wavy bands, not a fine checker
+    u = x * np.cos(ang) + y * np.sin(ang) + 0.02 * np.sin(2 * np.pi * (x * np.sin(ang) - y * np.cos(ang)) / 0.15)
+    bands = np.stack([np.sin(2 * np.pi * u / period + ph) for ph in (0.0, 2.1, 4.2)], axis=-1)  # rainbow fringes
+    a = a * (1 + 0.05 * bands)
+    a = a * np.array([0.9, 0.97, 1.08], np.float32)                 # cool screen cast
+    glare = _side_ramp(h, w, rng, (1.5, 2.5)) * 0.3
+    a = a + glare * (1 - a)
+    return _jpeg(Image.fromarray(np.clip(a * 255, 0, 255).astype(np.uint8)), int(rng.integers(70, 85)))
+
+
+def _cctv(im: Image.Image, rng) -> Image.Image:
+    w, h = im.size
+    a = np.asarray(im).astype(np.float32) / 255
+    a = _barrel(a, rng.uniform(0.1, 0.16))
+    g = a.mean(2, keepdims=True)
+    a = g + (a - g) * 0.35                                          # washed-out colour
+    a = 1 / (1 + np.exp(-(a - 0.5) * 6))                            # harsh contrast
+    a *= np.array([0.9, 1.05, 0.9], np.float32)                     # greenish
+    small = Image.fromarray(np.clip(a * 255, 0, 255).astype(np.uint8)).resize(
+        (max(64, int(w * 0.3)), max(64, int(h * 0.3))), Image.BILINEAR)
+    s = np.asarray(small).astype(np.float32) + rng.normal(0, 10, (small.height, small.width, 1)).astype(np.float32)
+    small = _jpeg(Image.fromarray(np.clip(s, 0, 255).astype(np.uint8)), int(rng.integers(30, 45)))
+    return small.resize((w, h), Image.BILINEAR)
+
+
+def _print(im: Image.Image, rng) -> Image.Image:
+    a = np.asarray(im).astype(np.float32) / 255
+    h, w = a.shape[:2]
+    g = a.mean(2, keepdims=True)
+    a = g + (a - g) * 0.75                                          # faded colour
+    a = 0.07 + a * 0.85                                             # soft, low-contrast print
+    a *= np.array([1.03, 1.0, 0.86], np.float32)                    # yellowed paper
+    paper = rng.normal(0, 1, (h // 4 + 1, w // 4 + 1)).astype(np.float32)
+    paper = np.asarray(Image.fromarray(paper).resize((w, h), Image.BICUBIC), dtype=np.float32)
+    a += (paper * 0.018)[..., None] + rng.normal(0, 0.02, (h, w, 1)).astype(np.float32)  # paper texture + print grain
+    return Image.fromarray(np.clip(a * 255, 0, 255).astype(np.uint8))
+
+
 FUNCS = {"grain": _grain, "motion": _motion, "lowres": _lowres, "soft": _soft, "film": _film,
          "selfie": _selfie, "nightselfie": _nightselfie, "flash": _flash, "lightleak": _lightleak,
-         "overexposed": _overexposed, "harsh": _harsh, "hdr": _hdr}
+         "overexposed": _overexposed, "harsh": _harsh, "hdr": _hdr, "tungsten": _tungsten,
+         "fluorescent": _fluorescent, "neon": _neon, "lens": _lens, "flare": _flare, "shadow": _shadow,
+         "screen": _screen, "cctv": _cctv, "print": _print}
 
 
 def _tone(im: Image.Image, f: str) -> Image.Image:
