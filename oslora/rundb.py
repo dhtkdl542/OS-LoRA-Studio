@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 CREATE TABLE IF NOT EXISTS evals (
     run TEXT, step INTEGER, fit REAL, val REAL, leak REAL, lr REAL, action TEXT, reason TEXT,
-    sec_per_step REAL, gpu_util REAL, gpu_watts REAL, PRIMARY KEY (run, step)
+    sec_per_step REAL, gpu_util REAL, gpu_watts REAL, dw REAL, PRIMARY KEY (run, step)
 );
 CREATE TABLE IF NOT EXISTS quality (
     run TEXT, step INTEGER, final INTEGER, likeness REAL, likeness_iqr REAL, adherence REAL,
@@ -61,6 +61,8 @@ def connect() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB), exist_ok=True)
     con = sqlite3.connect(DB, timeout=30)
     con.executescript(SCHEMA)
+    if "dw" not in [r[1] for r in con.execute("PRAGMA table_info(evals)")]:  # DBs from before the weight-change column
+        con.execute("ALTER TABLE evals ADD COLUMN dw REAL")
     return con
 
 
@@ -153,7 +155,7 @@ def ingest(run_dir: str, con: Optional[sqlite3.Connection] = None) -> Optional[s
                 if t == "eval":
                     evals.append((key, r["step"], r.get("fit"), r.get("val"), r.get("leak"), r.get("lr"),
                                   r.get("action"), r.get("reason"), r.get("sec_per_step"), r.get("gpu_util"),
-                                  r.get("gpu_watts")))
+                                  r.get("gpu_watts"), r.get("dw")))
                 elif t == "quality":
                     quality.append((key, r["step"], int(bool(r.get("final")))) + tuple(r.get(c) for c in QUALITY_COLS))
                 elif t == "step":
@@ -167,7 +169,7 @@ def ingest(run_dir: str, con: Optional[sqlite3.Connection] = None) -> Optional[s
     for table in ("evals", "quality", "steps"):
         con.execute(f"DELETE FROM {table} WHERE run=?", (key,))
     # a resumed run logs a step again after rolling back: the last record of a step wins
-    con.executemany("INSERT OR REPLACE INTO evals VALUES (?,?,?,?,?,?,?,?,?,?,?)", evals)
+    con.executemany("INSERT OR REPLACE INTO evals VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", evals)
     con.executemany(f"INSERT OR REPLACE INTO quality VALUES ({','.join('?' * (3 + len(QUALITY_COLS)))})", quality)
     con.executemany("INSERT OR REPLACE INTO steps VALUES (?,?,?,?,?,?)", steps)
     con.commit()

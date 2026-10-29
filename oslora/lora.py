@@ -83,6 +83,19 @@ class LoRANetwork:
             self.modules[name] = lora
         self.rank, self.alpha = rank, alpha
 
+    @torch.no_grad()
+    def delta_norm(self) -> float:
+        """How far the LoRA moves the model: the sum over modules of ||scale * up @ down||_F, from
+        the r x r factors (cheap). Grows smoothly with LR x steps; on Damdeari the user judged the
+        LoRA with the larger value more alike in all three comparisons so far (v3 584 > v5 447;
+        v5 2500 501 > 1500 361; 2000 447 > 1800 420)."""
+        total = 0.0
+        for m in self.modules.values():
+            up, down = m.lora_up.weight.float(), m.lora_down.weight.float()
+            r = torch.linalg.qr(up).R @ torch.linalg.qr(down.T).R.T
+            total += float(torch.linalg.matrix_norm(r)) * m.scale
+        return total
+
     def parameters(self) -> List[nn.Parameter]:
         params = []
         for m in self.modules.values():
