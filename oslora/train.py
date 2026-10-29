@@ -959,6 +959,39 @@ class Trainer:
         return self.q_base
 
     # ------------------------------------------------------------------ main loop
+    def forward_backward(self, sampler, shift: float, fixed_shift: bool):
+        """One batch: loss and gradients (clipped). Returns (loss, grad norm, timesteps)."""
+        cfg = self.cfg
+        batch = sampler.next()
+        picks = [self._train_latent(it) for it in batch]
+        x0 = torch.stack([lat for lat, _ in picks]).to(self.device, torch.float32)
+        texts = [self.text[""] if random.random() < cfg.dataset.caption_dropout else self._train_text(it, plain=photo)
+                 for it, (_, photo) in zip(batch, picks)]
+        flipped = cfg.dataset.flip and random.random() < 0.5
+        if flipped:
+            x0 = x0.flip(-1)
+        emb, mask = stack_text(texts, self.device)
+        # mixed resolution: each size gets its own shift (more tokens -> later noise levels)
+        b_shift = shift if (fixed_shift or not self.extra_items) else self.model.timestep_shift(*batch[0].bucket)
+        tt = sample_timesteps(len(batch), b_shift, self.device)
+        noise = torch.randn_like(x0)
+        xt = (1 - tt.view(-1, 1, 1, 1)) * x0 + tt.view(-1, 1, 1, 1) * noise
+        pred = self.model.predict(self.dit, xt, tt, emb, mask)
+        loss = self._loss(pred, noise - x0, batch, flipped)
+        loss.backward()
+        clip = cfg.train.grad_clip if cfg.train.grad_clip > 0 else 1e9
+        gnorm = float(torch.nn.utils.clip_grad_norm_(self.net.parameters(), clip))
+        return float(loss), gnorm, tt
+
+    def apply_update(self):
+        """Optimizer step after forward_backward (then max-norm and EMA)."""
+        self.opt.step()
+        self.opt.zero_grad(set_to_none=True)
+        if self.cfg.train.max_norm > 0:
+            self.net.max_norm_(self.cfg.train.max_norm)
+        if self.ema:
+            self.ema.update()
+
     def train(self, resume_step: Optional[int] = None):
         cfg, t = self.cfg, self.cfg.train
         torch.manual_seed(t.seed)
@@ -997,8 +1030,6 @@ class Trainer:
             f"timestep shift {shift:.2f}, Autopilot {'ON' if ap_on else 'OFF'}"
         )
 
-        empty = self.text[""]
-        params = self.net.parameters()
         self.net.train(True)
 
         if resume_step is None:
@@ -1042,38 +1073,14 @@ class Trainer:
                 group["lr"] = lr
             gpu.active, t_step = True, time.time()
 
-            batch = sampler.next()
-            picks = [self._train_latent(it) for it in batch]
-            x0 = torch.stack([lat for lat, _ in picks]).to(self.device, torch.float32)
-            texts = [empty if random.random() < cfg.dataset.caption_dropout else self._train_text(it, plain=photo)
-                     for it, (_, photo) in zip(batch, picks)]
-            flipped = cfg.dataset.flip and random.random() < 0.5
-            if flipped:
-                x0 = x0.flip(-1)
-            emb, mask = stack_text(texts, self.device)
-            # mixed resolution: each size gets its own shift (more tokens -> later noise levels)
-            b_shift = shift if (fixed_shift or not self.extra_items) else self.model.timestep_shift(*batch[0].bucket)
-            tt = sample_timesteps(len(batch), b_shift, self.device)
-            noise = torch.randn_like(x0)
-            xt = (1 - tt.view(-1, 1, 1, 1)) * x0 + tt.view(-1, 1, 1, 1) * noise
-            pred = self.model.predict(self.dit, xt, tt, emb, mask)
-            loss = self._loss(pred, noise - x0, batch, flipped)
-            loss.backward()
-            gnorm = float(torch.nn.utils.clip_grad_norm_(params, t.grad_clip if t.grad_clip > 0 else 1e9))
-            loss_v = float(loss)
-
+            loss_v, gnorm, tt = self.forward_backward(sampler, shift, fixed_shift)
             if ap.observe(loss_v, gnorm):
                 self.opt.zero_grad(set_to_none=True)
                 self.rollback(snapshot)
                 self.rl.log(f"step {step}: NaN/Inf 감지 → 롤백")
                 step += 1
                 continue
-            self.opt.step()
-            self.opt.zero_grad(set_to_none=True)
-            if t.max_norm > 0:
-                self.net.max_norm_(t.max_norm)
-            if self.ema:
-                self.ema.update()
+            self.apply_update()
             step += 1
             gpu.active = False
             span_time, span_steps = span_time + time.time() - t_step, span_steps + 1
