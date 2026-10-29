@@ -791,6 +791,7 @@ class TrainReq(BaseModel):
     holdout: str = "auto"
     caption_dropout: float = 0.05
     photo_texture: bool = False  # a third of the steps see the image with a natural photo tone + phone noise
+    caption_length: str = "medium"  # long / medium / short / mix (the captioner writes all three)
     masked: bool = False  # masked training: the loss counts the person, the background at 0.1 (masking.py)
     training_adapter: bool = True  # the model's recommended training adapter, if it has one (adapter.py)
     save_keep: int = 3  # regular checkpoints kept (0 = all)
@@ -951,6 +952,7 @@ def train_start(req: TrainReq):
 
     cfg.dataset.photo_texture = photoreal.RATE if req.photo_texture else 0.0
     cfg.dataset.photo_tone = bool(req.photo_texture)
+    cfg.dataset.caption_length = req.caption_length if req.caption_length in ("long", "medium", "short", "mix") else "medium"
     cfg.mask.enabled = bool(req.masked)
     cfg.train.int8_compute = bool(req.int8_compute)
     cfg.dataset.multires = [r for r in (512, 768) if r < req.resolution] if req.multires else []

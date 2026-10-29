@@ -157,6 +157,7 @@
           <div class="row3">
             <label class="field"><span>EMA</span><input id="tr-ema" value="0.99"></label>
             <label class="field"><span>캡션 드롭아웃</span><input id="tr-cdrop" value="0.05"></label>
+            <label class="field" title="자동 캡션은 긴·중간·짧은 캡션을 모두 만들어 둬요. 학습에는 여기서 고른 길이 하나만 써요 (섞기: 매번 무작위로 하나)."><span>캡션 길이</span><select id="tr-clen"><option value="medium">중간</option><option value="long">긴</option><option value="short">짧은</option><option value="mix">섞기</option></select></label>
             <label class="field"><span>옵티마이저</span><select id="tr-opt"><option>adamw</option><option>adamw8bit</option></select></label>
           </div>
           <label class="check" title="학습 step의 3분의 1은 이미지에 자연스러운 사진 톤과 폰카 센서 노이즈를 입혀서 봐요. 데이터가 너무 깨끗하면 LoRA가 '이 사람은 늘 매끈하다'까지 배워서 피부가 반짝이는 AI 느낌이 되는 걸 막아요. 데이터 파일은 그대로예요."><input type="checkbox" id="tr-photo" checked> 사진 질감 입히기 <em>(사진 톤 + 폰카 노이즈, 학습의 1/3)</em></label>

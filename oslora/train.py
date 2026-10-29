@@ -126,7 +126,7 @@ class Trainer:
             self.rl.log(f"⚠ 캡션 없는 이미지 {no_cap}개 (트리거워드만 사용됩니다)")
         from PIL import Image
 
-        items = []
+        items, hand_edited = [], 0
         for path, cap in pairs:
             with Image.open(path) as im:
                 w, h = im.size
@@ -134,11 +134,24 @@ class Trainer:
             if max(w / bucket[0], h / bucket[1]) < 0.75:
                 self.rl.log(f"⚠ 저해상도 이미지(업스케일됨): {os.path.basename(path)} {w}x{h}")
             variants = load_caption_variants(path)
-            if variants and cap and cap != variants.get("long"):
+            edited = bool(variants and cap and cap != variants.get("long"))
+            if edited:
                 variants["long"] = cap  # edited by hand in the caption editor (.txt): that wins
-            alt =[(apply_trigger(variants[k], c.trigger), w) for k, w in LENGTH_WEIGHTS if k in variants]
-            items.append(Item(image=path, caption=apply_trigger(cap, c.trigger), bucket=bucket,
+            length = getattr(c, "caption_length", "mix")
+            if variants and length in ("long", "medium", "short"):
+                # one length only (the captioner still writes all three); a hand edit still wins
+                text, alt = (cap if edited else variants.get(length) or cap), []
+                hand_edited += edited
+            else:
+                text = cap
+                alt = [(apply_trigger(variants[k], c.trigger), w) for k, w in LENGTH_WEIGHTS if k in variants]
+            items.append(Item(image=path, caption=apply_trigger(text, c.trigger), bucket=bucket,
                               key=file_key(path, f"{bucket[0]}x{bucket[1]}"), alt=alt if len(alt) > 1 else []))
+        length = getattr(c, "caption_length", "mix")
+        if length in ("long", "medium", "short"):
+            names = {"long": "긴", "medium": "중간", "short": "짧은"}
+            self.rl.log(f"캡션: {names[length]} 길이 하나만 써요" + (f" (손으로 고친 캡션 {hand_edited}장은 고친 것을 그대로)"
+                                                              if hand_edited else ""))
         for i in self._holdout_indices([os.path.basename(p) for p, _ in pairs]):
             items[i].holdout = True
         self.items = items
@@ -262,15 +275,17 @@ class Trainer:
     def cache_everything(self):
         cfg = self.cfg
         self.rl.set_status(phase="caching", message="텍스트 임베딩 캐싱")
-        # the photo texture with the tone: its steps get the captions without finish statements
+        # the photo texture with the tone: its steps get the caption without finish statements and
+        # with the texture named in front (photoreal.LEAD)
         plain = {}
         if cfg.dataset.photo_tone and float(cfg.dataset.photo_texture or 0) > 0:
+            from . import photoreal
             from .augment import strip_finish
 
             for it in self.items + self.extra_items:
                 if not os.path.basename(it.image).startswith(AUG_PREFIX):
                     for t in [it.caption] + [t for t, _ in it.alt]:
-                        plain[t] = strip_finish(t)
+                        plain[t] = f"{photoreal.LEAD} {strip_finish(t)}"
         texts = ({it.caption for it in self.items + self.extra_items} | {t for it in self.items + self.extra_items for t, _ in it.alt} | {""}
                  | set(plain.values()) | set(cfg.sample.prompts)
                  | set(cfg.autopilot.leak_prompts) | set(self.quality_prompts) | set(self.checks.values()))
@@ -292,8 +307,8 @@ class Trainer:
                 it.alt_text_plain = [(self.text[plain[t]], w) for t, w in it.alt]
         if plain:
             n = sum(1 for t, p in plain.items() if p != t)
-            self.rl.log(f"사진 질감 step의 캡션: 화질 문장(매끈함·노이즈 없음·보정된 피부 등)을 뺀 버전을 써요 "
-                        f"(캡션 {len(plain)}개 중 {n}개에서 뺐어요)")
+            self.rl.log(f"사진 질감 step의 캡션: 화질 문장(매끈함·노이즈 없음·보정된 피부 등)을 빼고 앞에 질감 설명을 붙여요 "
+                        f"(캡션 {len(plain)}개, 화질 문장은 {n}개에서 뺐어요)")
         n_alt = sum(1 for it in self.items if it.alt)
         if n_alt:
             self.rl.log(f"캡션 길이 섞기: {n_alt}장은 긴/중간/짧은 캡션 중 하나를 매번 골라요 "

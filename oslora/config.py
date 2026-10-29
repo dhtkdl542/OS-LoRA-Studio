@@ -108,6 +108,10 @@ class DatasetConfig:
     resolution: int = 1024
     holdout: Union[str, int] = "auto"
     caption_dropout: float = 0.05
+    # which caption a step uses when the captioner wrote long / medium / short: "mix" picks one per
+    # step (50/30/20), or one length only. New runs from the UI use "medium" (2026-10-29: the Fizgig
+    # LoRA that looked more like the person trained one ~58-word caption); older configs keep "mix"
+    caption_length: str = "mix"
     flip: bool = False
     # share of steps that see the image with a real photo's finish ("natural photo" tone + phone
     # sensor noise) instead of the spotless original; 0 = off. Augmented copies are left alone.
