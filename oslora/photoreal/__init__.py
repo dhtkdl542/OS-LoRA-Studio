@@ -31,6 +31,10 @@ NOISE_ONLY = 2  # the version-2 recipe, still used by the proxy experiments
 TONE = "자연스러운 사진"
 NOISE = "폰카 느낌"
 RATE = 1 / 3  # share of training steps that see the textured version
+# put in front of the caption on those steps (with the tone): the look is tied to words, like the
+# degraded copies, instead of becoming the character's default (the user's call, 2026-10-29)
+LEAD = ("A natural-looking phone photo with soft, true-to-life contrast, slightly lifted shadows and fine "
+        "sensor noise over the whole image.")
 ISO_JITTER = (0.7, 1.5)  # per image, so no single noise signature repeats over the dataset
 
 
