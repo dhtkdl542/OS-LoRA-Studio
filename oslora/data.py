@@ -192,7 +192,8 @@ def pick_holdout(n: int, mode, seed: int = 0, names: Optional[Sequence[str]] = N
     """'auto': hold out ~8% (2-6 images) when there are >= 16 images, else none.
 
     With ``names``, a face crop and its original (``sources``: crop -> original) are held out
-    or trained on together: a held-out photo whose crop is in training is not unseen."""
+    or trained on together: a held-out photo whose crop is in training is not unseen. Photos
+    without copies are picked first, so the copies stay in training."""
     if mode in (None, False, 0, "off", "none"):
         return []
     groups = [[i] for i in range(n)]
@@ -215,7 +216,12 @@ def pick_holdout(n: int, mode, seed: int = 0, names: Optional[Sequence[str]] = N
     rng = random.Random(seed)
     if names is None:
         return sorted(rng.sample(range(n), count))
-    return sorted(i for g in rng.sample(range(units), count) for i in groups[g])
+    # photos without a crop / degraded copy first: a held-out photo takes its copies out of training
+    singles = [g for g in range(units) if len(groups[g]) == 1]
+    others = [g for g in range(units) if len(groups[g]) > 1]
+    take = rng.sample(singles, min(count, len(singles)))
+    take += rng.sample(others, count - len(take))
+    return sorted(i for g in take for i in groups[g])
 
 
 class LatentCache:

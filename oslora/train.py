@@ -32,7 +32,7 @@ from .config import (
     save_config,
 )
 from .data import (AUG_PREFIX, LENGTH_WEIGHTS, BucketSampler, Item, LatentCache, apply_trigger, bucket_for, crop_sources,
-                   file_key, load_caption_variants, load_image, pick_holdout, scan_folder)
+                   file_key, is_derived, load_caption_variants, load_image, pick_holdout, scan_folder)
 from .lora import EMA, LoRANetwork
 from .models import get_adapter
 
@@ -165,7 +165,12 @@ class Trainer:
         if self.extra_items:
             self.rl.log(f"해상도 섞기: {c.resolution}px에 더해 "
                         f"{sorted({int(r) for r in c.multires if int(r) != c.resolution})}px로도 학습해요 (고르게 섞음)")
-        self.val_items = [it for it in items if it.holdout]
+        # the holdout measures unseen photos: a held-out photo's crop / degraded copies are neither
+        # trained (they would show the photo) nor probed (their loss is the copy's, not the photo's)
+        self.val_items = [it for it in items if it.holdout and not is_derived(os.path.basename(it.image))]
+        dropped = sum(1 for it in items if it.holdout) - len(self.val_items)
+        if dropped:
+            self.rl.log(f"홀드아웃 원본에 딸린 크롭·변형 사본 {dropped}장은 학습에도 검증에도 쓰지 않아요")
         buckets = sorted({it.bucket for it in self.train_items})
         self.rl.log(f"데이터셋: 학습 {len(self.train_items)}장, 검증(홀드아웃) {len(self.val_items)}장, 버킷 {buckets}")
 
