@@ -1051,7 +1051,6 @@ class Trainer:
             best_step, best_weights = self.restore(resume_step, ap, sampler, max_steps)
             step = resume_step
         self._load_marks(upto=resume_step)
-        self.pick_likeness = resume_step is not None and "likeness" in self.marks
         snapshot = self.take_snapshot()
 
         t_start = time.time() - 1e-3
@@ -1115,7 +1114,7 @@ class Trainer:
                     self.rollback(snapshot)
                 else:
                     snapshot = self.take_snapshot()
-                if d.is_best and not self.pick_likeness:
+                if d.is_best:
                     with self.using_ema():
                         best_weights, best_step = self.lora_weights(), step
                 if not d.rollback:
@@ -1147,13 +1146,6 @@ class Trainer:
             if self.evaluator is not None and step % quality_every == 0 and step < max_steps:
                 q = self.quality_round(step)
                 self._mark_best("likeness", step, (q or {}).get("likeness"), save_every, max_steps)
-                if self.marks.get("likeness", {}).get("step") == step:
-                    # with faces the recommendation is the likeness peak (the holdout is blind to
-                    # the face; "latest healthy" picked the memorising stretch on Damdeari v5)
-                    self.pick_likeness = True
-                    with self.using_ema():
-                        best_weights, best_step = self.lora_weights(), step
-                    self.rl.set_status(best_step=best_step)
                 if ap_on and ap.should_stop(step):
                     stop_reason = "조기 종료: " + ("외우기 시작함" if ap.stop_why else "품질 저하가 반복됨")
                     break
@@ -1174,8 +1166,8 @@ class Trainer:
             best_weights, best_step = last, step
         self.save_lora(os.path.join(self.run_dir, f"{cfg.name}.safetensors"), best_weights,
                        {"ss_steps": best_step, "oslora_selected": "best"})
-        how = "닮음 최고" if self.pick_likeness else "마지막 건강한 평가"
-        self.rl.log(f"저장: {cfg.name}.safetensors (추천: step {best_step}, {how}), {cfg.name}_last.safetensors (step {step})")
+        self.rl.log(f"저장: {cfg.name}.safetensors (추천: step {best_step}, 마지막 건강한 평가), "
+                    f"{cfg.name}_last.safetensors (step {step})")
         if cfg.sample.prompts:
             # final samples from the selected (best) weights
             if self.ema:
