@@ -166,6 +166,7 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 .ds-diag { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 10px; min-height: 0; }
 .diag-head { display: flex; justify-content: space-between; align-items: center; }
 .diag-head .btn { padding: 3px 10px; font-size: 12px; }
+.diag-actions { display: flex; gap: 6px; }
 .diag-body { overflow-y: auto; min-height: 0; display: grid; gap: 10px; align-content: start; padding-right: 2px; }
 .finding { border: 1px solid var(--line); border-radius: var(--r-sm); padding: 10px 12px; background: var(--panel-2); display: grid; gap: 6px; }
 .finding .ft { display: flex; gap: 8px; align-items: baseline; font-weight: 600; font-size: 13px; }

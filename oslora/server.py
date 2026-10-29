@@ -411,7 +411,9 @@ def dataset(req: FolderReq):
         items.append({"path": path, "name": os.path.basename(path), "caption": cap, "w": w, "h": h})
     n = len(items)
     holdout = min(6, max(2, round(n * 0.08))) if n >= 16 else 0
-    return {"folder": folder, "items": items, "holdout": holdout,
+    from .cleanup import Journal
+
+    return {"folder": folder, "items": items, "holdout": holdout, "undo": Journal.latest(folder) is not None,
             "captioned": sum(1 for i in items if i["caption"]),
             "small": sum(1 for i in items if 0 < i["w"] * i["h"] < 700 * 700)}
 
@@ -430,7 +432,7 @@ def diagnose_start(req: DiagReq):
     folder = req.folder.strip().strip('"')
     if not os.path.isdir(folder):
         raise HTTPException(404, "폴더를 찾을 수 없습니다.")
-    if DIAG["running"]:
+    if DIAG["running"] or CLEAN["running"]:  # the cleanup analyses the folder itself
         return {"ok": True}
     DIAG.update(running=True, folder=folder, done=0, total=0, current="", report=None, error=None)
 
@@ -495,11 +497,123 @@ def diagnose_fix(req: FixReq):
     folder = req.folder.strip().strip('"')
     if not os.path.isdir(folder):
         raise HTTPException(404, "폴더를 찾을 수 없습니다.")
+    if CLEAN["running"]:
+        raise HTTPException(409, "원클릭 정리가 끝난 뒤 실행하세요.")
     try:
         res = fix(folder, req.action, req.files)
     except ValueError as e:
         raise HTTPException(400, str(e))
     console(f"[진단] {res['message']}")
+    return res
+
+
+CLEAN: Dict = {"running": False, "folder": None, "step": 0, "steps": [], "name": "", "detail": "",
+               "result": None, "error": None}
+
+
+class CleanupReq(BaseModel):
+    folder: str
+    resolution: int = 1024
+    caption: Optional[Dict] = None  # the caption panel's settings (CaptionStart), for images without a caption
+
+
+def _training_folder() -> Optional[str]:
+    """Dataset folder of the training run in progress (None when nothing trains)."""
+    if not (running("train") and STATE["train_run"]):
+        return None
+    try:
+        from .config import load_config
+
+        return load_config(os.path.join(OUTPUT, STATE["train_run"], "config.yaml")).dataset.folder
+    except Exception:
+        return None
+
+
+def _same_folder(a: str, b: str) -> bool:
+    return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
+
+
+def _check_not_training(folder: str):
+    tf = _training_folder()
+    if tf and _same_folder(tf, folder):
+        raise HTTPException(409, "이 데이터셋으로 학습 중이에요. 학습이 끝난 뒤 정리하세요.")
+
+
+@app.post("/api/cleanup")
+def cleanup_start(req: CleanupReq):
+    """One-click dataset cleanup (oslora.cleanup) in a background thread. Captions for the
+    images without one use the caption job, so that step waits while the GPU is busy."""
+    from .cleanup import STEPS, Cleanup
+
+    folder = req.folder.strip().strip('"')
+    if not os.path.isdir(folder):
+        raise HTTPException(404, "폴더를 찾을 수 없습니다.")
+    if CLEAN["running"]:
+        return {"ok": True}
+    _check_not_training(folder)
+    CLEAN.update(running=True, folder=folder, step=0, steps=list(STEPS), name=STEPS[0], detail="", result=None, error=None)
+
+    def caption() -> Optional[str]:
+        if req.caption is None:
+            return "캡션 설정이 없어요"
+        if running("train") or running("compare") or experiments_running():
+            return "GPU를 쓰는 작업이 끝나면 정리를 다시 눌러 주세요"
+        try:
+            _start_caption(folder, CaptionStart(**{**req.caption, "folder": folder, "overwrite": False}))
+        except HTTPException as e:
+            return str(e.detail)
+        code = PROCS["caption"].wait()
+        return None if code == 0 else "캡션 작업이 실패했어요 (콘솔 로그를 확인하세요)"
+
+    def work():
+        try:
+            while DIAG["running"]:  # both write the same analysis cache
+                time.sleep(0.3)
+            console(f"\n[정리] 시작: {folder}")
+
+            def progress(i, name, detail):
+                CLEAN.update(step=i, name=name, detail=detail)
+                if not detail:
+                    console(f"[정리] {i + 1}/{len(STEPS)} {name}")
+
+            res = Cleanup(folder, req.resolution, caption, progress).run()
+            CLEAN["result"] = res
+            console(f"[정리] {res['summary']}")
+        except Exception as e:
+            CLEAN["error"] = str(e)
+            console(f"[정리] 실패: {e}")
+        finally:
+            CLEAN["running"] = False
+
+    threading.Thread(target=work, daemon=True).start()
+    return {"ok": True}
+
+
+@app.get("/api/cleanup/status")
+def cleanup_status():
+    out = {k: v for k, v in CLEAN.items() if k != "result"}
+    if CLEAN["result"]:
+        out["summary"] = CLEAN["result"]["summary"]
+    if CLEAN["running"] and running("caption"):
+        out["detail"] = read_json(os.path.join(CACHE, "caption_status.json")).get("message", "") or out["detail"]
+    return out
+
+
+@app.post("/api/cleanup/undo")
+def cleanup_undo(req: FolderReq):
+    from .cleanup import Journal
+
+    folder = req.folder.strip().strip('"')
+    if not os.path.isdir(folder):
+        raise HTTPException(404, "폴더를 찾을 수 없습니다.")
+    if CLEAN["running"]:
+        raise HTTPException(409, "정리가 끝난 뒤 되돌리세요.")
+    _check_not_training(folder)
+    j = Journal.latest(folder)
+    if j is None:
+        raise HTTPException(404, "되돌릴 정리가 없어요.")
+    res = j.undo()
+    console(f"[정리] {res['message']}")
     return res
 
 
@@ -596,6 +710,14 @@ def caption_start(req: CaptionStart):
     folder = req.folder.strip().strip('"')
     if not os.path.isdir(folder):
         raise HTTPException(400, "데이터셋 폴더를 먼저 불러오세요.")
+    if CLEAN["running"]:
+        raise HTTPException(409, "원클릭 정리 중이에요. 캡션도 정리 안에서 만들어요.")
+    _start_caption(folder, req)
+    return {"ok": True}
+
+
+def _start_caption(folder: str, req: CaptionStart):
+    """Launch the caption job; HTTPException when the GPU or the caption model is not available."""
     if running("caption"):
         raise HTTPException(409, "캡션 작업이 이미 실행 중입니다.")
     if running("train"):
@@ -626,7 +748,6 @@ def caption_start(req: CaptionStart):
                                         creationflags=NO_WINDOW, env=CHILD_ENV)
     console(f"\n[캡션] 시작: {folder} (모델 {req.model}, {req.style}/{req.subject})")
     echo_output(log_path, PROCS["caption"], "[캡션]", _caption_line)
-    return {"ok": True}
 
 
 @app.get("/api/caption/status")

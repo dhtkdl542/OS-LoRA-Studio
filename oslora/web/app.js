@@ -103,6 +103,7 @@ async function loadDataset() {
     <div class="${d.captioned < n ? "warn" : ""}"><b>${d.captioned}</b><span>캡션 있음</span></div>
     <div><b>${d.holdout || "-"}</b><span>${d.holdout ? "검증용 홀드아웃" : "홀드아웃 없음 (16장 미만)"}</span></div>
     ${d.small ? `<div class="warn"><b>${d.small}</b><span>저해상도</span></div>` : ""}`;
+  $("#clean-undo").hidden = !d.undo;
   selectImage(-1);
   layoutGrid();
   updateSummary();
@@ -189,7 +190,9 @@ function renderFindings(findings) {
       S.flags[n] = cur;
     });
   });
-  $("#diag-body").innerHTML = findings.map((f, k) => `
+  const note = S.cleanNote && S.ds && S.cleanNote.folder === S.ds.folder
+    ? `<div class="finding ok"><div class="ft"><i></i><span>원클릭 정리</span></div><div class="fd">${esc(S.cleanNote.text)}</div></div>` : "";
+  $("#diag-body").innerHTML = note + findings.map((f, k) => `
     <div class="finding ${f.level}">
       <div class="ft"><i></i><span>${esc(f.title)}</span></div>
       <div class="fd">${esc(f.detail)}</div>
@@ -229,6 +232,45 @@ async function applyFix(f) {
   } catch (e) { toast(e.message, true); }
 }
 $("#diag-rerun").addEventListener("click", startDiagnosis);
+// ------------------------------------------------------------------ one-click cleanup
+async function startCleanup() {
+  if (!S.ds) return;
+  if (!confirm("데이터셋을 한 번에 정리할까요?\n\n큰 이미지 줄이기 → 깨진·다른 사람·중복·흐린 이미지 빼기 → 얼굴 크롭 맞추기 → "
+    + "캡션 없는 이미지만 캡션(아래 자동 캡션 설정으로) → 화질 변형 사본 맞추기\n\n"
+    + "지우지 않고 excluded 폴더로 옮기며, '되돌리기'로 정리 전으로 돌아갈 수 있어요.")) return;
+  const { overwrite, ...cap } = capSettings();
+  try {
+    await api("/api/cleanup", { folder: S.ds.folder, resolution: +segValue("tr-res") || 1024, caption: { folder: S.ds.folder, ...cap } });
+  } catch (e) { return toast(e.message, true); }
+  clearTimeout(S.diagTimer);
+  pollCleanup();
+}
+async function pollCleanup() {
+  let st;
+  try { st = await api("/api/cleanup/status"); } catch { return; }
+  $("#clean-run").disabled = st.running;
+  if (st.running) {
+    const n = st.steps.length || 7;
+    $("#diag-body").innerHTML = `<div class="diag-progress"><span>정리 중… ${st.step + 1}/${n} ${esc(st.name)}</span>
+      <div class="bar"><span style="width:${(100 * st.step) / n}%"></span></div><span>${esc(st.detail || "")}</span></div>`;
+    S.cleanTimer = setTimeout(pollCleanup, 800);
+    return;
+  }
+  if (st.error) toast(`정리 실패: ${st.error}`, true);
+  else if (st.summary) S.cleanNote = { folder: st.folder, text: st.summary };
+  await loadDataset();  // new grid; the check-up reuses the cleanup's analysis
+}
+async function undoCleanup() {
+  if (!S.ds || !confirm("마지막 원클릭 정리를 되돌릴까요?\n옮긴 파일은 제자리로, 정리 때 만든 파일은 excluded/_정리기록 폴더로 옮겨요.")) return;
+  try {
+    const r = await api("/api/cleanup/undo", { folder: S.ds.folder });
+    S.cleanNote = null;
+    toast(r.message);
+    await loadDataset();
+  } catch (e) { toast(e.message, true); }
+}
+$("#clean-run").addEventListener("click", startCleanup);
+$("#clean-undo").addEventListener("click", undoCleanup);
 $("#ed-back").addEventListener("click", () => selectImage(-1));
 
 async function saveCaption() {
@@ -1149,6 +1191,7 @@ async function boot() {
   if (params.get("re") === "compare") setSeg("re-mode", "compare");
   if (location.hash.length > 1) show(location.hash.slice(1));
   if (d.busy.caption) pollCaption();
+  api("/api/cleanup/status").then(st => st.running && pollCleanup()).catch(() => { });
   setInterval(refreshRuns, 5000);
   refreshSystem();
   setInterval(refreshSystem, 2000);

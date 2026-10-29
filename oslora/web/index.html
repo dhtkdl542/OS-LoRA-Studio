@@ -65,7 +65,7 @@
       <aside class="ds-editor" id="ds-editor">
         <!-- dataset check-up: shown while no image is selected -->
         <div class="ds-diag" id="ds-diag">
-          <div class="diag-head"><h3>데이터셋 진단</h3><button class="btn ghost" id="diag-rerun">다시 진단</button></div>
+          <div class="diag-head"><h3>데이터셋 진단</h3><span class="diag-actions"><button class="btn ghost" id="clean-undo" hidden title="마지막 원클릭 정리 전으로">되돌리기</button><button class="btn ghost" id="diag-rerun">다시 진단</button><button class="btn primary" id="clean-run" title="줄이기·빼기·크롭·캡션·화질 변형을 한 번에">원클릭 정리</button></span></div>
           <div class="diag-body" id="diag-body"><div class="empty small">폴더를 불러오면 자동으로 진단해요.</div></div>
         </div>
         <!-- caption editor: shown when an image is selected -->
