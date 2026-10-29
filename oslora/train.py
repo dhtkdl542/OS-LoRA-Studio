@@ -710,6 +710,8 @@ class Trainer:
             ap.anneal_start = int(max_steps * (1 - ap.cfg.anneal_frac))
         if step < ap.anneal_start:
             ap.anneal_from = None
+        # continuing on purpose: a memorising stop has to be seen again on evaluations after this step
+        ap.stop_why, ap.mem_from = None, step
         if not exact:
             ap.rewarm = (step, max(20, ap.eval_every // 2))  # fresh Adam moments: short re-warmup
         sampler.epoch = state.get("epoch", 0)
@@ -1013,6 +1015,7 @@ class Trainer:
             best_step, best_weights = self.restore(resume_step, ap, sampler, max_steps)
             step = resume_step
         self._load_marks(upto=resume_step)
+        self.pick_likeness = resume_step is not None and "likeness" in self.marks
         snapshot = self.take_snapshot()
 
         t_start = time.time() - 1e-3
@@ -1100,7 +1103,7 @@ class Trainer:
                     self.rollback(snapshot)
                 else:
                     snapshot = self.take_snapshot()
-                if d.is_best:
+                if d.is_best and not self.pick_likeness:
                     with self.using_ema():
                         best_weights, best_step = self.lora_weights(), step
                 if not d.rollback:
@@ -1132,12 +1135,21 @@ class Trainer:
             if self.evaluator is not None and step % quality_every == 0 and step < max_steps:
                 q = self.quality_round(step)
                 self._mark_best("likeness", step, (q or {}).get("likeness"), save_every, max_steps)
+                if self.marks.get("likeness", {}).get("step") == step:
+                    # with faces the recommendation is the likeness peak (the holdout is blind to
+                    # the face; "latest healthy" picked the memorising stretch on Damdeari v5)
+                    self.pick_likeness = True
+                    with self.using_ema():
+                        best_weights, best_step = self.lora_weights(), step
+                    self.rl.set_status(best_step=best_step)
                 if ap_on and ap.should_stop(step):
-                    stop_reason = "조기 종료: 품질 저하가 반복됨"
+                    stop_reason = "조기 종료: " + ("외우기 시작함" if ap.stop_why else "품질 저하가 반복됨")
                     break
 
         # ---- finish
         self.rl.log(f"학습 종료 ({stop_reason}) at step {step}")
+        if ap_on:
+            self.rl.log(ap.stop_report())
         with self.using_ema():
             last = self.lora_weights()
         self.save_lora(os.path.join(self.run_dir, f"{cfg.name}_last.safetensors"), last, {"ss_steps": step})
@@ -1150,7 +1162,8 @@ class Trainer:
             best_weights, best_step = last, step
         self.save_lora(os.path.join(self.run_dir, f"{cfg.name}.safetensors"), best_weights,
                        {"ss_steps": best_step, "oslora_selected": "best"})
-        self.rl.log(f"저장: {cfg.name}.safetensors (최고 점수 step {best_step}), {cfg.name}_last.safetensors (step {step})")
+        how = "닮음 최고" if self.pick_likeness else "마지막 건강한 평가"
+        self.rl.log(f"저장: {cfg.name}.safetensors (추천: step {best_step}, {how}), {cfg.name}_last.safetensors (step {step})")
         if cfg.sample.prompts:
             # final samples from the selected (best) weights
             if self.ema:

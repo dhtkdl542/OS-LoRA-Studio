@@ -34,6 +34,13 @@ So the controller
     its improvement, or (no holdout) the leak keeps growing through a plateau;
   * recommends the *latest* evaluation that is still healthy (val within a quarter of its
     gain, no quality degradation): for a character LoRA later means a better-learned face.
+    (With faces, the trainer recommends the likeness peak instead -- see train.py.)
+  * stops when the run is memorising (``memorising``): likeness made no new peak for
+    ``stall_rounds`` quality rounds while, over the last ``mem_window`` evaluations, the
+    training images kept improving and the holdout got worse. Before this rule no run in the
+    history (13 of them) ever stopped early; replayed on them it stopped Seoldam v1 at 2100 and
+    MOSS Damdeari v2 at 1600 of 3000, and let the late learner (Judam v1, best at 2400) finish.
+    A single stalled round was too eager (Judam stopped at 1800): likeness is noisy (±0.026).
 """
 
 import math
@@ -71,6 +78,8 @@ class AutopilotConfig:
     leak_growth: float = 0.25  # leak growth over two windows that counts during a plateau
     leak_weight: float = 0.1  # display score: leak penalty (tie-breaker)
     min_steps_frac: float = 0.3  # never stop before this fraction of max_steps
+    stall_rounds: int = 2  # memorising stop: quality rounds without a new likeness peak...
+    mem_window: int = 5  # ...while over this many evaluations fit falls and val rises
 
 
 @dataclass
@@ -124,6 +133,8 @@ class Autopilot:
         self.q_penalty = 0.0
         self.q_bad = 0
         self.q_degraded = False
+        self.stop_why: Optional[str] = None  # memorising stop, once it fired
+        self.mem_from = 0  # resumed runs: the memorising stop needs fresh evaluations after this step
 
     # -- per step -------------------------------------------------------------------
     def lr_at(self, step: int) -> float:
@@ -189,10 +200,73 @@ class Autopilot:
         return f"브레이크: {why} → LR ×0.8 (조기 종료 신호는 아님)"
 
     def should_stop(self, step: int) -> bool:
-        return self.cfg.early_stop and self.strikes >= self.cfg.patience and step >= self.cfg.min_steps_frac * self.max_steps
+        return (self.cfg.early_stop and (self.strikes >= self.cfg.patience or self.stop_why is not None)
+                and step >= self.cfg.min_steps_frac * self.max_steps)
+
+    # -- memorising stop ----------------------------------------------------------------
+    @staticmethod
+    def _slope(xs: List[float], ys: List[float]) -> float:
+        mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+        den = sum((x - mx) ** 2 for x in xs)
+        return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / den if den else 0.0
+
+    def _likeness_peak(self):
+        """(step, value) of the best likeness so far and how many rounds came after it."""
+        likes = [(h["step"], h["likeness"]) for h in self.q_history if h["step"] > 0 and h.get("likeness") is not None]
+        if not likes:
+            return None, 0
+        i = max(range(len(likes)), key=lambda k: likes[k][1])
+        return likes[i], len(likes) - 1 - i
+
+    def memorising(self, evals: List[Dict]) -> Optional[str]:
+        """The face stopped improving and the run only memorises the training images: likeness
+        without a new peak for ``stall_rounds`` rounds, and over the last ``mem_window``
+        evaluations fit falling while val rises. ``evals``: history rows with fit and val."""
+        cfg = self.cfg
+        peak, since = self._likeness_peak()
+        rows = [h for h in evals if h["step"] > self.mem_from and h.get("val") is not None][-cfg.mem_window:]
+        if peak is None or since < cfg.stall_rounds or len(rows) < cfg.mem_window:
+            return None
+        xs = [h["step"] for h in rows]
+        if self._slope(xs, [h["fit"] for h in rows]) < 0 and self._slope(xs, [h["val"] for h in rows]) > 0:
+            return (f"얼굴은 step {peak[0]}(닮음 {peak[1]:.2f}) 이후 {since}회 확인에도 나아지지 않고, "
+                    f"최근 {cfg.mem_window}회 평가 동안 학습 이미지만 좋아지고 홀드아웃은 나빠짐 → 외우는 중")
+        return None
+
+    def _check_memorising(self, evals: List[Dict]) -> Optional[str]:
+        if self.stop_why is None and self.cfg.early_stop:
+            self.stop_why = self.memorising(evals)
+            return self.stop_why
+        return None
+
+    def stop_report(self) -> str:
+        """One line for the end of the run: did the memorising stop fire, and if not, why not."""
+        if self.stop_why:
+            return f"멈춤 규칙: 작동함 ({self.stop_why})"
+        peak, since = self._likeness_peak()
+        if peak is None:
+            return "멈춤 규칙: 판단 못 함 (닮음 측정 없음: 얼굴이 없거나 평가자를 못 씀)"
+        if not any(h.get("val") is not None for h in self.history[1:]):
+            return "멈춤 규칙: 판단 못 함 (홀드아웃 없음)"
+        if since == 0:
+            return f"멈춤 규칙: 작동 안 함 (닮음이 끝까지 오름, 최고 step {peak[0]} {peak[1]:.2f})"
+        if since < self.cfg.stall_rounds:
+            return (f"멈춤 규칙: 작동 안 함 (닮음 최고 step {peak[0]} {peak[1]:.2f} 이후 확인이 {since}회뿐이라 "
+                    f"정체로 판단하기엔 이름)")
+        return (f"멈춤 규칙: 작동 안 함 (닮음 최고 step {peak[0]} 이후 {since}회 정체했지만 "
+                f"홀드아웃이 나빠지는 추세는 아니었음)")
 
     # -- quality judges ---------------------------------------------------------------
     def quality(self, step: int, q: Dict) -> Optional[str]:
+        """Judge one round of quality renders (``_judge_quality``), then the memorising stop: this
+        step's evaluation is already in the history, so the new likeness is judged against it."""
+        note = self._judge_quality(step, q)
+        why = self._check_memorising(self.history) if step > 0 else None
+        if why:
+            note = (note + " | " if note else "") + why + " → 학습 종료"
+        return note
+
+    def _judge_quality(self, step: int, q: Dict) -> Optional[str]:
         """Judge one round of quality renders. Some change is the point of a LoRA: a character
         LoRA *should* move CLIP adherence, diversity and similarity-to-training-images once the
         face becomes the character. So the reference is taken when the subject is learned
@@ -377,6 +451,10 @@ class Autopilot:
         if stable and not warm and val_ok and not self.q_degraded:
             self.best_score, self.best_step, d.is_best = d.score, step, True
 
+        if stable and not warm:
+            why = self._check_memorising(self.history + [{"step": step, "fit": fit, "val": val}])
+            if why:
+                d.reason += " | " + why
         if self.should_stop(step):
             d.stop = True
             d.reason += " → 조기 종료"
