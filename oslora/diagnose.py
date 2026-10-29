@@ -7,10 +7,11 @@ analyze(folder) inspects every image:
 and turns that into a short list of findings, each with an optional fix:
     missing captions      -> caption just those (the regular caption job)
     looks like someone else, duplicates, blurry -> move to excluded/<reason>/ (never deleted)
-    few face close-ups    -> write FaceCrop_<name>.png crops of the best-likeness faces only
-                             (~20% of the dataset, not one per photo)
-    too many face crops   -> keep the best ~20% (likeness, detail gained, sharpness), move the
-                             rest to excluded/크롭과다/: each crop repeats its original's face
+    missing face close-ups -> write a FaceCrop_<name>.png close-up for every original whose face
+                             can be enlarged (2026-10-29: the Fizgig run with one crop per photo
+                             looked more like her than ours with ~20 %)
+    more crops than photos -> keep the best one per photo's worth (likeness, detail gained,
+                             sharpness), move the rest to excluded/크롭과다/
     very large originals  -> shrink by area to ~2 MP (Fizgig's Image Prep: aspect kept, nothing
                              cropped); the full-size file moves to excluded/원본/, and face crops
                              are still cut from it
@@ -217,9 +218,10 @@ def _pair_crops(folder: str, items: List[Dict], embeds: Dict[str, np.ndarray]):
 
 
 def _crop_target(n_originals: int) -> int:
-    """How many face crops a dataset of this size should carry: ~20% of the originals.
-    One crop per photo shows every face twice and the face sets before anything else."""
-    return max(2, min(12, round(n_originals * 0.2)))
+    """How many face crops a dataset should carry: one per original. The ~20 % rule (2026-10-18,
+    "every face twice sets the face first") was never tested; the Fizgig run that trained one crop
+    per photo looked more like the person than ours with ~20 % (blind picks, 2026-10-28/29)."""
+    return max(2, n_originals)
 
 
 def _rank_crops(crops: List[Dict], by_name: Dict[str, Dict]) -> List[Dict]:
@@ -241,8 +243,9 @@ def _rank_crops(crops: List[Dict], by_name: Dict[str, Dict]) -> List[Dict]:
 
 
 def _aug_target(n_originals: int) -> int:
-    """Degraded copies for a dataset of this size: ~15% of the originals (2-10)."""
-    return max(2, min(10, round(n_originals * 0.15)))
+    """Degraded copies for a dataset of this size: ~30 % of the originals (3-20). With a face crop
+    per photo the copies stay ~13 % of the training images; the camera looks must stay promptable."""
+    return max(3, min(20, round(n_originals * 0.3)))
 
 
 def _findings(items: List[Dict], resolution: int) -> List[Dict]:
@@ -347,8 +350,7 @@ def _findings(items: List[Dict], resolution: int) -> List[Dict]:
         ranked = _rank_crops(crops, by_name)
         extra = [it["path"] for it in ranked[target:]]
         add("crop_many", "warn", f"얼굴 크롭이 너무 많아요 ({len(crops)}장, 원본 {len(originals)}장)",
-            "원본과 크롭으로 같은 얼굴을 두 번씩 보게 돼서 얼굴만 먼저 굳어요. 프롬프트의 흔들림·화장·표정이 "
-            f"얼굴에만 잘 안 먹는 과적합의 원인이 돼요. 데이터셋 크기에 맞춰 닮음이 가장 좋은 {target}장만 남기고 "
+            f"원본 한 장에 크롭 한 장이면 충분해요. 닮음이 가장 좋은 {target}장만 남기고 "
             f"나머지 {len(extra)}장은 excluded/크롭과다 폴더로 옮겨요 (지우지 않아요).", extra,
             "exclude:crop", f"닮은 크롭 {target}장만 남기기")
 
@@ -356,7 +358,8 @@ def _findings(items: List[Dict], resolution: int) -> List[Dict]:
     # (urgent when most faces are small, optional otherwise), best-likeness faces only
     faces = [it for it in originals if "face" in it]
     closeups = [it for it in ok if it.get("face", {}).get("ratio", 0) >= 0.06 or it.get("crop")]
-    has_crop = {it.get("source") for it in crops} | {it.get("source") for it in augs}
+    # a photo can carry one close-up and one degraded copy
+    has_crop = {it.get("source") for it in crops}
 
     def zooms_in(it):
         return _face_crop_box(_full_size(it)) is not None
@@ -370,9 +373,9 @@ def _findings(items: List[Dict], resolution: int) -> List[Dict]:
 
         best = sorted(croppable, key=lambda it: it["face"].get("sim", 0) + 0.08 * gain(it), reverse=True)[:want]
         files = [it["path"] for it in best]
-        why = (f"데이터셋 {len(originals)}장에는 얼굴 클로즈업 {target}장 정도가 알맞아요 (지금 크롭 {len(crops)}장). "
-               f"닮음이 가장 좋은 {len(best)}장의 얼굴 부분을 잘라 FaceCrop_ 사본을 만들어요 (원본은 그대로). "
-               "사진마다 만들지 않는 건, 같은 얼굴을 두 번씩 보면 얼굴만 먼저 굳어서예요.")
+        why = (f"원본마다 얼굴 클로즈업을 한 장씩 두면 이목구비를 또렷하게 배워요 (지금 크롭 {len(crops)}장, 원본 "
+               f"{len(originals)}장). 얼굴을 확대할 수 있는 {len(best)}장의 얼굴 부분을 잘라 FaceCrop_ 사본을 만들어요 "
+               "(원본은 그대로).")
         if faces and len(closeups) < 0.3 * len(ok):
             add("closeup", "warn", f"얼굴 클로즈업이 적어요 ({len(closeups)}/{len(ok)}장)",
                 "얼굴이 작게 나온 사진이 대부분이면 이목구비를 잘 못 배워요. " + why,
@@ -410,7 +413,7 @@ def _findings(items: List[Dict], resolution: int) -> List[Dict]:
             f"{len(extra)}장은 excluded/변형과다 폴더로 옮겨요.", [it["path"] for it in extra],
             "exclude:aug", f"변형 사본 {aug_target}장만 남기기")
     want = aug_target - len(augs)
-    used = has_crop | {it.get("source") for it in augs}
+    used = {it.get("source") for it in augs}
     candidates = [it for it in originals if "face" in it and it["name"] not in used and it.get("caption_words")]
     from .augment import BLUR_KINDS, KIND_LABELS, coverage, plan_rebalance
 
@@ -444,9 +447,10 @@ def _findings(items: List[Dict], resolution: int) -> List[Dict]:
         best = sorted(candidates, key=lambda it: it["face"].get("sim", 0), reverse=True)[:want]
         add("augment", "info", f"화질 변형 사본 {len(best)}장을 더할 수 있어요",
             "데이터가 전부 깨끗하면 LoRA가 '이 사람은 늘 깨끗하다'까지 배워서, 노이즈·흔들림·저화질을 요청해도 "
-            f"지워버려요. 크롭하지 않은 사진 중 닮음이 가장 좋은 {len(best)}장에 효과를 하나씩 걸어 Aug_ 사본을 만들어요. "
-            "효과는 노이즈·플래시·폰 HDR·필름·빛샘·강한 대비·과다 노출 같은 또렷한 것과 흔들림·저해상도·초점 흐림·셀카 같은 "
-            "흐린 것을 섞되, 흐린 것은 3분의 1 정도만 써요. 두 장에 한 장은 흑백·따뜻한 톤·차가운 톤·빛바램·쨍한 필터도 함께 "
+            f"지워버려요. 아직 변형 사본이 없는 사진 중 닮음이 가장 좋은 {len(best)}장에 효과를 하나씩 걸어 Aug_ 사본을 만들어요. "
+            "효과는 카메라 마감(노이즈·플래시·HDR·필름), 조명 색(텅스텐·형광등·네온), 렌즈(광각 왜곡·플레어), 그림자 무늬, "
+            "매체(화면 촬영·CCTV·인쇄 스캔)와 흔들림·저해상도·초점 흐림·셀카 같은 흐린 것을 골고루 섞되, 흐린 것은 3분의 1 "
+            "정도만 써요. 두 장에 한 장은 흑백·따뜻한 톤·차가운 톤·빛바램·쨍한 필터도 함께 "
             "걸고, 캡션 맨 앞에 어떤 효과인지 적어요 (원본은 그대로).",
             [it["path"] for it in best], "augment", f"화질 변형 {len(best)}장 만들기")
     elif want > 0 and any("face" in it and it["name"] not in used for it in originals):
