@@ -19,6 +19,7 @@ Face crops are paired with their originals (by name, else by the face) so the ho
 splits a pair and the step count treats a crop as half an image.
 """
 
+import functools
 import hashlib
 import json
 import os
@@ -34,13 +35,14 @@ from .data import AUG_PREFIX, CROP_PREFIX, IMAGE_EXTS, is_derived
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE = os.path.join(ROOT, "cache", "diagnosis")
 EXCLUDED = "excluded"
-REASON_DIRS = {"look": "다른사람같음", "duplicate": "중복", "blurry": "흐림", "crop": "크롭과다", "aug": "변형과다",
+REASON_DIRS = {"broken": "깨짐", "look": "다른사람같음", "duplicate": "중복", "blurry": "흐림", "crop": "크롭과다", "aug": "변형과다",
                "aug_rebalance": "변형정리", "recrop": "크롭정리", "resize": "원본"}
 # training reads at most ~1 MP (1024 px); a 2880x3840 PNG (11 MP, ~15 MB) is decoded in full for
 # every check-up, thumbnail, caption and mask. Images above LARGE_MP are offered a shrink to PREP_MP.
 PREP_MP = 2.0
 LARGE_MP = 3.0
-REPORT_VERSION = 3  # 2: face crops paired with their originals, 3: augmented copies
+REPORT_VERSION = 4  # 2: face crops paired with their originals, 3: augmented copies, 4: per-image reuse
+JOURNAL_DIR = "_정리기록"  # one-click cleanup records and undo leftovers (oslora.cleanup), inside excluded/
 
 
 def _images(folder: str) -> List[str]:
@@ -90,48 +92,58 @@ def _signature(paths: List[str]) -> str:
 
 
 def analyze(folder: str, resolution: int = 1024, progress: Optional[Callable[[int, int, str], None]] = None) -> Dict:
-    from .evaluate import FaceID
-
     paths = _images(folder)
     sig = _signature(paths)
     cp = _cache_path(folder)
-    if os.path.isfile(cp):
-        try:
-            with open(cp, encoding="utf-8") as f:
-                cached = json.load(f)
-            if cached.get("signature") == sig and cached.get("resolution") == resolution                     and cached.get("version") == REPORT_VERSION:
-                # the per-image analysis is reusable; the findings are cheap, so newer rules apply
-                cached["findings"] = _findings(cached["items"], resolution)
-                return cached
-        except Exception:
-            pass
+    cached = _load_report(cp)
+    if cached and cached.get("signature") == sig and cached.get("resolution") == resolution:
+        # the per-image analysis is reusable; the findings are cheap, so newer rules apply
+        cached["findings"] = _findings(cached["items"], resolution)
+        return cached
+    # images unchanged since the last check-up keep their analysis: after a fix only the new or
+    # changed files are opened (the identity centre, pairs and findings are always redone)
+    prev_items = {it["name"]: it for it in cached["items"]} if cached else {}
+    prev_embeds = _load_embeds(cp, cached) if cached else {}
 
-    face = FaceID()
+    face = None
     items, embeds = [], []
     for i, p in enumerate(paths):
         if progress:
             progress(i, len(paths), os.path.basename(p))
-        it = {"path": p, "name": os.path.basename(p)}
-        try:
-            with Image.open(p) as im:
-                im = ImageOps.exif_transpose(im).convert("RGB")
-                it["w"], it["h"] = im.size
-                it["sharp"] = _sharpness(im)
-                it["hash"] = _dhash(im)
-                f = face.analyze(im)
-        except Exception as e:
-            it["error"] = str(e)
-            items.append(it)
-            continue
+        name, key = os.path.basename(p), _file_key(p)
+        old = prev_items.get(name)
+        if old and old.get("key") == key and "error" not in old and ("face" not in old or name in prev_embeds):
+            it = {k: v for k, v in old.items() if k != "source"}
+            it["path"] = p
+            if "face" in it:
+                it["face"] = {k: v for k, v in it["face"].items() if k != "sim"}
+            f = {"embedding": prev_embeds[name]} if "face" in it else None
+        else:
+            it = {"path": p, "name": name, "key": key}
+            try:
+                if face is None:
+                    from .evaluate import FaceID
+                    face = FaceID()
+                with Image.open(p) as im:
+                    im = ImageOps.exif_transpose(im).convert("RGB")
+                    it["w"], it["h"] = im.size
+                    it["sharp"] = _sharpness(im)
+                    it["hash"] = _dhash(im)
+                    f = face.analyze(im)
+            except Exception as e:
+                it["error"] = str(e)
+                items.append(it)
+                continue
+            if f:
+                x, y, w, h = f["box"]
+                it["face"] = {"box": [x, y, w, h], "count": f["count"], "ratio": (w * h) / (it["w"] * it["h"])}
         cap = os.path.splitext(p)[0] + ".txt"
         text = open(cap, encoding="utf-8").read().strip() if os.path.isfile(cap) else ""
         it["caption_words"] = len(text.split())
         it["crop"] = it["name"].startswith(CROP_PREFIX)
         it["aug"] = it["name"].startswith(AUG_PREFIX)
         if f:
-            x, y, w, h = f["box"]
-            it["face"] = {"box": [x, y, w, h], "count": f["count"], "ratio": (w * h) / (it["w"] * it["h"])}
-            embeds.append((len(items), f["embedding"]))
+            embeds.append((len(items), np.asarray(f["embedding"], dtype=np.float32)))
         items.append(it)
 
     # identity: robust centroid (drop the farthest 20% once), then similarity per image
@@ -147,11 +159,39 @@ def analyze(folder: str, resolution: int = 1024, progress: Optional[Callable[[in
     _pair_crops(folder, items, {items[idx]["name"]: v for idx, v in embeds})
 
     report = {"folder": folder, "signature": sig, "resolution": resolution, "items": items,
-              "analyzed": time.time(), "version": REPORT_VERSION}
+              "analyzed": time.time(), "version": REPORT_VERSION, "embed_names": [items[i]["name"] for i, _ in embeds]}
     report["findings"] = _findings(items, resolution)
+    np.save(_embeds_path(cp), np.stack([v for _, v in embeds]) if embeds else np.zeros((0, 512), np.float32))
     with open(cp, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False)
     return report
+
+
+def _file_key(path: str) -> str:
+    st = os.stat(path)
+    return f"{st.st_size}|{int(st.st_mtime)}"
+
+
+def _embeds_path(cache_json: str) -> str:
+    return cache_json[:-len(".json")] + ".npy"
+
+
+def _load_report(cp: str) -> Optional[Dict]:
+    try:
+        with open(cp, encoding="utf-8") as f:
+            report = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return report if report.get("version") == REPORT_VERSION else None
+
+
+def _load_embeds(cp: str, report: Dict) -> Dict[str, np.ndarray]:
+    try:
+        e = np.load(_embeds_path(cp))
+    except (OSError, ValueError):
+        return {}
+    names = report.get("embed_names", [])
+    return dict(zip(names, e)) if len(names) == len(e) else {}
 
 
 def _pair_crops(folder: str, items: List[Dict], embeds: Dict[str, np.ndarray]):
@@ -217,7 +257,9 @@ def _findings(items: List[Dict], resolution: int) -> List[Dict]:
 
     bad = [it["path"] for it in items if "error" in it]
     if bad:
-        add("broken", "bad", f"열 수 없는 이미지 {len(bad)}장", "파일이 깨졌거나 이미지가 아니에요. 확인 후 지워주세요.", bad)
+        add("broken", "bad", f"열 수 없는 이미지 {len(bad)}장",
+            "파일이 깨졌거나 이미지가 아니에요. excluded/깨짐 폴더로 옮겨요 (지우지 않아요).", bad,
+            "exclude:broken", "excluded 폴더로 빼기")
 
     large = [it for it in items if "error" not in it and not it.get("crop") and it["w"] * it["h"] > LARGE_MP * 1e6]
     if large:
@@ -342,9 +384,14 @@ def _findings(items: List[Dict], resolution: int) -> List[Dict]:
 
     # crops made with the old hair-to-collarbone framing: the face is a third of the picture, which
     # barely zooms in on a large source; offer to cut them again as close-ups
+    def tighter(it):  # a re-cut would frame the face clearly closer (a small source only allows a loose crop)
+        src = _full_size(by_name[it["source"]])
+        box = _face_crop_box(src)
+        share = src["face"]["box"][3] / (box[3] - box[1]) if box is not None else 0
+        return share * CROP_DETECT_BIAS > 1.15 * it["face"]["box"][3] / it["h"]
+
     loose = [it for it in crops if "face" in it and it["face"]["box"][3] / it["h"] < LOOSE_CROP
-             and "face" in by_name.get(it.get("source", ""), {})
-             and _face_crop_box(_full_size(by_name[it["source"]])) is not None]
+             and "face" in by_name.get(it.get("source", ""), {}) and tighter(it)]
     if loose:
         add("recrop", "info", f"얼굴 크롭 {len(loose)}장이 느슨해요",
             "얼굴이 크롭의 3분의 1 정도라 머리부터 쇄골까지 담겨서, 큰 사진에서는 거의 확대가 안 돼요. 원본에서 얼굴이 "
@@ -423,7 +470,9 @@ def _retired_crop(path: str) -> bool:
     hand): don't offer to cut it again -- the check-up would otherwise go round in circles."""
     d, n = os.path.split(_crop_path(path))
     ex = os.path.join(d, EXCLUDED)
-    return os.path.isdir(ex) and any(os.path.isfile(os.path.join(ex, sub, n)) for sub in os.listdir(ex))
+    # files put aside by a cleanup's undo are not a decision against the crop
+    return os.path.isdir(ex) and any(os.path.isfile(os.path.join(ex, sub, n))
+                                     for sub in os.listdir(ex) if sub != JOURNAL_DIR)
 
 
 def _full_size(it: Dict) -> Dict:
@@ -433,16 +482,29 @@ def _full_size(it: Dict) -> Dict:
     full = os.path.join(d, EXCLUDED, REASON_DIRS["resize"], n)
     if "face" not in it or not os.path.isfile(full):
         return it
-    with Image.open(full) as im:
-        W, H = im.size
-        if im.getexif().get(0x0112, 1) in (5, 6, 7, 8):  # stored rotated
-            W, H = H, W
+    W, H = _upright_size(full, os.stat(full).st_mtime)
     sx, sy = W / it["w"], H / it["h"]
     x, y, w, h = it["face"]["box"]
     return dict(it, w=W, h=H, full=full, face=dict(it["face"], box=[x * sx, y * sy, w * sx, h * sy]))
 
 
-def _shrink(path: str, folder: str, mp: float = PREP_MP) -> bool:
+@functools.lru_cache(maxsize=4096)
+def _upright_size(path: str, mtime: float):
+    """Image size as displayed (EXIF rotation applied), from the header: ``getexif()`` on a PNG
+    decodes the whole file to reach a trailing eXIf chunk (~0.2 s for a 10 MP original)."""
+    with Image.open(path) as im:
+        W, H = im.size
+        if im.format == "PNG":
+            raw = im.info.get("exif")
+            ex = Image.Exif()
+            if raw:
+                ex.load(raw)
+        else:
+            ex = im.getexif()
+    return (H, W) if ex.get(0x0112, 1) in (5, 6, 7, 8) else (W, H)
+
+
+def _shrink(path: str, folder: str, mp: float = PREP_MP, journal=None) -> bool:
     """Scale an image down to ``mp`` megapixels in place (aspect kept); the original moves to
     excluded/원본/ first. Its captions stay with the image. False if it is not larger."""
     with Image.open(path) as im:
@@ -459,12 +521,12 @@ def _shrink(path: str, folder: str, mp: float = PREP_MP) -> bool:
     small.save(tmp, format=fmt, **({"quality": 95} if fmt == "JPEG" else {}))
     dst_dir = os.path.join(folder, EXCLUDED, REASON_DIRS["resize"])
     os.makedirs(dst_dir, exist_ok=True)
-    dst, n = os.path.join(dst_dir, os.path.basename(path)), 1
-    while os.path.exists(dst):
-        stem, ext = os.path.splitext(os.path.basename(path))
-        dst, n = os.path.join(dst_dir, f"{stem}_{n}{ext}"), n + 1
+    stem, ext = os.path.splitext(os.path.basename(path))
+    dst = os.path.join(dst_dir, stem + _free_suffix(dst_dir, [stem + ext]) + ext)
     shutil.move(path, dst)
     os.replace(tmp, path)
+    if journal is not None:
+        journal.moved(path, dst)
     return True
 
 
@@ -474,6 +536,9 @@ def _shrink(path: str, folder: str, mp: float = PREP_MP) -> bool:
 CROP_PADDINGS = (0.3, 0.45, 0.65, 0.9)
 CROP_MIN_SIDES = (768, 512)
 LOOSE_CROP = 0.5  # a crop whose face is under this share of its height was framed the old, loose way
+# YuNet measures a face that fills a close-up ~20% smaller than the same face in the full photo
+# (Heukdam: fresh crops framed for 0.62 measured 0.47-0.56); without this every fresh crop looked loose
+CROP_DETECT_BIAS = 0.8
 
 
 def _face_crop_box(it: Dict):
@@ -520,16 +585,42 @@ def _write_crop(it: Dict) -> bool:
     return True
 
 
-def _move_with_captions(path: str, dst_dir: str):
-    """Move an image with its caption files (.txt and the 3-length .captions.json)."""
+CAPTION_EXTS = (".txt", ".captions.json")
+
+
+def _with_suffix(name: str, sfx: str) -> str:
+    for ext in CAPTION_EXTS:
+        if name.endswith(ext):
+            return name[:-len(ext)] + sfx + ext
+    stem, ext = os.path.splitext(name)
+    return stem + sfx + ext
+
+
+def _free_suffix(dst_dir: str, names: List[str]) -> str:
+    """'' or '_N' so that none of ``names`` (with the suffix before the extension) exists in
+    ``dst_dir`` yet: a second file of the same name must not overwrite the first one put aside."""
+    sfx, n = "", 1
+    while any(os.path.exists(os.path.join(dst_dir, _with_suffix(nm, sfx))) for nm in names):
+        sfx, n = f"_{n}", n + 1
+    return sfx
+
+
+def _move_with_captions(path: str, dst_dir: str, journal=None):
+    """Move an image with its caption files (.txt and the 3-length .captions.json), renamed
+    together when those names are already taken in ``dst_dir``."""
     stem = os.path.splitext(path)[0]
-    for src in (path, stem + ".txt", stem + ".captions.json"):
-        if os.path.isfile(src):
-            shutil.move(src, os.path.join(dst_dir, os.path.basename(src)))
+    srcs = [f for f in [path] + [stem + e for e in CAPTION_EXTS] if os.path.isfile(f)]
+    sfx = _free_suffix(dst_dir, [os.path.basename(f) for f in srcs])
+    for src in srcs:
+        dst = os.path.join(dst_dir, _with_suffix(os.path.basename(src), sfx))
+        shutil.move(src, dst)
+        if journal is not None:
+            journal.moved(src, dst)
 
 
-def fix(folder: str, action: str, files: List[str]) -> Dict:
-    """Apply a finding's fix to the given file names (relative to ``folder``)."""
+def fix(folder: str, action: str, files: List[str], journal=None) -> Dict:
+    """Apply a finding's fix to the given file names (relative to ``folder``). ``journal``
+    (oslora.cleanup.Journal) records every move so a one-click cleanup can be undone."""
     paths = [os.path.join(folder, f) for f in files if os.path.isfile(os.path.join(folder, f))]
     if action.startswith("exclude:"):
         reason = REASON_DIRS.get(action.split(":", 1)[1], "기타")
@@ -537,7 +628,7 @@ def fix(folder: str, action: str, files: List[str]) -> Dict:
         os.makedirs(dst_dir, exist_ok=True)
         moved = 0
         for p in paths:
-            _move_with_captions(p, dst_dir)
+            _move_with_captions(p, dst_dir, journal)
             moved += 1
         return {"done": moved, "message": f"{moved}장을 '{EXCLUDED}/{reason}' 폴더로 옮겼어요 (되돌리려면 다시 꺼내면 돼요)"}
     if action == "aug_rebalance":
@@ -547,7 +638,7 @@ def fix(folder: str, action: str, files: List[str]) -> Dict:
         dst_dir = os.path.join(folder, EXCLUDED, REASON_DIRS["aug_rebalance"])
         os.makedirs(dst_dir, exist_ok=True)
         for p in retire:
-            _move_with_captions(p, dst_dir)
+            _move_with_captions(p, dst_dir, journal)
         made = make_copies([p for p in paths if p not in retire])
         refresh_captions(folder)  # the kept copies get captions without the original's finish statements
         return {"done": len(retire) + made,
@@ -562,7 +653,7 @@ def fix(folder: str, action: str, files: List[str]) -> Dict:
             src = by_name.get(by_name.get(os.path.basename(p), {}).get("source", ""))
             if not src or "face" not in src or _face_crop_box(_full_size(src)) is None:
                 continue
-            _move_with_captions(p, dst_dir)
+            _move_with_captions(p, dst_dir, journal)
             made += _write_crop(src)
         return {"done": made, "message": f"얼굴 크롭 {made}장을 클로즈업으로 다시 잘랐어요 (예전 크롭은 '{EXCLUDED}/{REASON_DIRS['recrop']}'). "
                                          "캡션이 없으니 '캡션 없는 이미지'를 자동 캡션하세요"}
@@ -576,7 +667,7 @@ def fix(folder: str, action: str, files: List[str]) -> Dict:
                 made += _write_crop(it)
         return {"done": made, "message": f"얼굴 클로즈업 {made}장을 만들었어요. 캡션이 없으니 '캡션 없는 이미지'를 자동 캡션하세요"}
     if action == "resize":
-        done = sum(_shrink(p, folder) for p in paths)
+        done = sum(_shrink(p, folder, journal=journal) for p in paths)
         return {"done": done, "message": f"{done}장을 {PREP_MP:g}MP로 줄였어요 (원본은 '{EXCLUDED}/{REASON_DIRS['resize']}', "
                                          "얼굴 크롭은 앞으로도 원본에서 잘라요)"}
     if action == "augment":
