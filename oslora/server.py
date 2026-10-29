@@ -40,16 +40,16 @@ NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 PRESETS = {
     "character": {"label": "캐릭터", "hint": "1024px, 얼굴과 정체성 위주",
-                  "resolution": 1024, "rank": 32, "alpha": 32, "start_lr": 1e-4, "min_lr": 3e-5, "max_lr": 1e-4,
+                  "resolution": 1024, "rank": 32, "alpha": 32, "start_lr": 1.4e-4, "min_lr": 1e-4, "max_lr": 2e-4,
                   "caption_dropout": 0.05, "max_steps": "auto"},
     "character_fast": {"label": "캐릭터 빠르게", "hint": "768px, 약 2배 빠름",
-                       "resolution": 768, "rank": 32, "alpha": 32, "start_lr": 1e-4, "min_lr": 3e-5, "max_lr": 1e-4,
+                       "resolution": 768, "rank": 32, "alpha": 32, "start_lr": 1.4e-4, "min_lr": 1e-4, "max_lr": 2e-4,
                        "caption_dropout": 0.05, "max_steps": "auto"},
     "style": {"label": "화풍", "hint": "낮은 LR, 캡션 드롭아웃 10%",
               "resolution": 1024, "rank": 32, "alpha": 32, "start_lr": 5e-5, "min_lr": 1e-5, "max_lr": 8e-5,
               "caption_dropout": 0.1, "max_steps": "auto"},
     "test": {"label": "빠른 테스트", "hint": "512px, 300 step만",
-             "resolution": 512, "rank": 16, "alpha": 16, "start_lr": 1e-4, "min_lr": 3e-5, "max_lr": 1e-4,
+             "resolution": 512, "rank": 16, "alpha": 16, "start_lr": 1.4e-4, "min_lr": 1e-4, "max_lr": 2e-4,
              "caption_dropout": 0.05, "max_steps": 300},
 }
 DEFAULT_SAMPLES = list(DEFAULT_SAMPLE_PROMPTS)
@@ -792,6 +792,7 @@ class TrainReq(BaseModel):
     caption_dropout: float = 0.05
     photo_texture: bool = False  # a third of the steps see the image with a natural photo tone + phone noise
     caption_length: str = "medium"  # long / medium / short / mix (the captioner writes all three)
+    lr_drive: str = "fizgig"  # fizgig (epoch-level, no early stop) | autopilot
     masked: bool = False  # masked training: the loss counts the person, the background at 0.1 (masking.py)
     training_adapter: bool = True  # the model's recommended training adapter, if it has one (adapter.py)
     save_keep: int = 3  # regular checkpoints kept (0 = all)
@@ -963,6 +964,7 @@ def train_start(req: TrainReq):
     cfg.train.max_steps = "auto" if ms in ("", "auto") else int(ms)
     cfg.train.ema_decay, cfg.train.optimizer, cfg.train.lr = req.ema, req.optimizer, req.lr
     cfg.autopilot.enabled, cfg.autopilot.early_stop = req.autopilot, req.early_stop
+    cfg.autopilot.drive = req.lr_drive if req.lr_drive in ("fizgig", "autopilot") else "fizgig"
     cfg.autopilot.min_lr, cfg.autopilot.max_lr = req.min_lr, req.max_lr
     if not req.min_lr <= req.start_lr <= req.max_lr:
         raise HTTPException(400, "시작 LR은 최소 LR과 최대 LR 사이여야 합니다.")

@@ -183,6 +183,10 @@ class SampleConfig:
 @dataclass
 class AutopilotSection(AutopilotConfig):
     enabled: bool = True
+    # who steers the LR: "fizgig" (lrdrive.EpochAdaptiveLR: epoch-level, within [min_lr, max_lr], no
+    # early stop, the last weights are the result) or "autopilot" (probe-driven brakes and early stop).
+    # New runs from the UI use "fizgig" (2026-10-29); older configs keep the Autopilot.
+    drive: str = "autopilot"
     eval_every: Union[str, int] = "auto"
     probe_images: int = 4
     # quality judges (face likeness + CLIP adherence/diversity/copy) run on their own small

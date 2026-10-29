@@ -134,17 +134,18 @@
           <h3>Autopilot</h3>
           <label class="switch"><input type="checkbox" id="tr-ap" checked><span></span></label>
         </div>
-        <p class="ap-desc">학습하는 동안 세 가지를 주기적으로 재서 LR을 스스로 조절하고, 과적합이 보이면 마무리하고 멈춰요. 점수가 가장 좋았던 시점이 최종 파일이 됩니다.</p>
+        <p class="ap-desc">LR을 스스로 조절해요. Fizgig 방식은 epoch마다 학습 loss를 보고 최소~최대 LR 안에서만 움직이고 끝까지 학습해요 (최종 파일 = 마지막, 중간 저장본은 그대로). Autopilot 방식은 아래 세 가지를 재서 LR을 조절하고 과적합이 보이면 멈춰요. 세 가지는 어느 방식이든 기록해요.</p>
         <ul class="probes">
           <li><i class="dot fit"></i><div><b>학습 이미지 loss</b><span>얼마나 배웠는지. 내려가야 해요.</span></div></li>
           <li><i class="dot val"></i><div><b>홀드아웃 loss</b><span>학습에서 뺀 사진으로 일반화 확인. 다시 오르면 과적합이에요.</span></div></li>
           <li><i class="dot leak"></i><div><b>누출</b><span>자동차·풍경 같은 무관한 그림이 얼마나 바뀌는지. 작을수록 좋아요.</span></div></li>
         </ul>
         <div class="row3">
-          <label class="field"><span>최소 LR</span><input id="tr-minlr" value="3e-5"></label>
-          <label class="field"><span>시작 LR</span><input id="tr-startlr" value="1e-4"></label>
-          <label class="field"><span>최대 LR</span><input id="tr-maxlr" value="1e-4"></label>
+          <label class="field"><span>최소 LR</span><input id="tr-minlr" value="1e-4"></label>
+          <label class="field"><span>시작 LR</span><input id="tr-startlr" value="1.4e-4"></label>
+          <label class="field"><span>최대 LR</span><input id="tr-maxlr" value="2e-4"></label>
         </div>
+        <label class="field"><span>LR 운전</span><select id="tr-drive"><option value="fizgig">Fizgig 방식 (epoch마다, 조기 종료 없음)</option><option value="autopilot">Autopilot (측정 기반, 실험용)</option></select></label>
         <div class="row2">
           <label class="field"><span>검증용 홀드아웃</span>
             <select id="tr-holdout"><option value="auto">자동 (16장 이상일 때)</option><option value="off">끄기</option><option value="2">2장</option><option value="4">4장</option><option value="6">6장</option></select>

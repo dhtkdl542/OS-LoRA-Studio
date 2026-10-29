@@ -687,6 +687,7 @@ class Trainer:
             "best_step": best_step,
             "best": [w.to(torch.bfloat16) for w in best_weights] if best_weights is not None else None,
             "epoch": sampler.epoch,
+            "drive": self.drive.state_dict() if getattr(self, "drive", None) else None,
             "rng": {"torch": torch.get_rng_state(), "cuda": torch.cuda.get_rng_state(), "py": random.getstate()},
         }
         torch.save(light, os.path.join(d, f"state_{step:05d}.pt"))
@@ -721,6 +722,8 @@ class Trainer:
             self.net.load_state_dict(sd)  # the checkpoint holds EMA weights: start from them
             if self.ema:
                 self.ema.shadow = [p.detach().float().clone() for p in self.net.parameters()]
+        if getattr(self, "drive", None) is not None and state.get("drive"):
+            self.drive.load_state_dict(state["drive"])  # the LR and streaks; its blend-back snapshot starts fresh
         saved = state["ap"]
         old_max = saved["max_steps"]
         default_old = int(saved["max_steps"] * (1 - ap.cfg.anneal_frac))
@@ -1029,6 +1032,13 @@ class Trainer:
         ap_on = cfg.autopilot.enabled
         ap = Autopilot(cfg.autopilot, max_steps, eval_every)
         self.ap = ap if ap_on else None
+        drive = None
+        if ap_on and getattr(cfg.autopilot, "drive", "autopilot") == "fizgig":
+            from .lrdrive import EpochAdaptiveLR
+
+            drive = EpochAdaptiveLR(cfg.autopilot.min_lr, cfg.autopilot.max_lr)
+        self.drive = drive
+        ap_ctl = ap_on and drive is None  # the Autopilot steers the LR and may stop the run
         quality_every = resolve_int(cfg.autopilot.quality_every, max(eval_every, int(round(max_steps / 10 / 100)) * 100))
         self.quality_every = quality_every
         if self.quality_prompts:
@@ -1047,7 +1057,9 @@ class Trainer:
         self.rl.log(
             f"최대 {max_steps} step (epoch당 {spe} step), 평가 {eval_every}마다, 샘플 {sample_every}마다, "
             + (f"품질 확인 {quality_every}마다, " if self.evaluator else "") +
-            f"timestep shift {shift:.2f}, Autopilot {'ON' if ap_on else 'OFF'}"
+            f"timestep shift {shift:.2f}, LR 운전 "
+            + (f"Fizgig 방식 ({drive.min_lr:.0e}~{drive.max_lr:.0e}, 시작 {drive.lr:.2e}, epoch마다, 조기 종료 없음)" if drive
+               else ("Autopilot" if ap_on else "고정 (cosine)"))
         )
 
         self.net.train(True)
@@ -1075,6 +1087,7 @@ class Trainer:
 
         gpu = GpuMonitor()  # sampled only while training steps run (not evals / samples)
         span_time, span_steps = 0.0, 0
+        epoch_losses: List[float] = []
         while step < max_steps:
             if self.rl.pause_requested():
                 t_start += self.pause(step)  # paused time does not count toward speed / ETA
@@ -1087,7 +1100,7 @@ class Trainer:
             if self.rl.stop_requested():
                 stop_reason = "사용자 중지"
                 break
-            lr = ap.lr_at(step) if ap_on else self._cosine_lr(step, max_steps)
+            lr = drive.lr if drive else (ap.lr_at(step) if ap_on else self._cosine_lr(step, max_steps))
             for group in self.opt.param_groups:
                 group["lr"] = lr
             gpu.active, t_step = True, time.time()
@@ -1101,6 +1114,16 @@ class Trainer:
                 continue
             self.apply_update()
             step += 1
+            if drive is not None:  # epoch end: the epoch's mean loss moves the LR
+                epoch_losses.append(loss_v)
+                if step % spe == 0:
+                    act, why = drive.epoch_end(step // spe - 1, sum(epoch_losses) / len(epoch_losses),
+                                               self.net.parameters(), self.opt)
+                    self.rl.log(f"[LR] epoch {step // spe}: 평균 loss {sum(epoch_losses) / len(epoch_losses):.4f} "
+                                f"-> LR {drive.lr:.2e} ({act}{': ' + why if why else ''})")
+                    self.rl.metric(type="epoch", step=step, loss=sum(epoch_losses) / len(epoch_losses), lr=drive.lr,
+                                   action=act, reason=why)
+                    epoch_losses = []
             gpu.active = False
             span_time, span_steps = span_time + time.time() - t_step, span_steps + 1
 
@@ -1123,13 +1146,15 @@ class Trainer:
                 with self.using_ema():
                     fit, val, leak = self.run_probes()
                 d = ap.evaluate(step, fit, val, leak)
-                if not ap_on:  # still scored (best checkpoint), but no LR control
+                if not ap_ctl:  # still scored, but no LR control or stop
                     d.rollback, d.stop, d.lr = False, False, lr
+                with self.using_ema():
+                    dw = self.net.delta_norm()  # how far the LoRA moves the model (weights as saved)
                 if d.rollback:
                     self.rollback(snapshot)
                 else:
                     snapshot = self.take_snapshot()
-                if d.is_best:
+                if d.is_best and drive is None:  # with the Fizgig drive the result is the last weights
                     with self.using_ema():
                         best_weights, best_step = self.lora_weights(), step
                 if not d.rollback:
@@ -1137,13 +1162,13 @@ class Trainer:
                 # this span's training steps only: s/step, and how busy the GPU was meanwhile
                 g, spt = gpu.take(), span_time / max(1, span_steps)
                 span_time, span_steps = 0.0, 0
-                self.rl.metric(type="eval", step=step, fit=fit, val=val, leak=leak, lr=d.lr, action=d.action,
+                self.rl.metric(type="eval", step=step, fit=fit, val=val, leak=leak, dw=dw, lr=d.lr, action=d.action,
                                reason=d.reason, score=d.score, best=d.is_best, sec_per_step=spt,
                                gpu_util=g and g["util"], gpu_watts=g and g["watts"])
                 speed = f"{spt:.1f}초/step" + (f", GPU {g['util']:.0f}% {g['watts']:.0f}W" if g else "")
                 self.rl.log(
                     f"[평가 {step}] fit {fit:.4f}" + (f" val {val:.4f}" if val is not None else "")
-                    + f" leak {leak:.2e} score {d.score:.4f}{' ★' if d.is_best else ''} | LR {d.lr:.2e} | {d.reason}"
+                    + f" leak {leak:.2e} 변화량 {dw:.0f} score {d.score:.4f}{' ★' if d.is_best else ''} | LR {d.lr:.2e} | {d.reason}"
                     + f" | 학습 {speed}"
                 )
                 self.rl.set_status(best_step=best_step, strikes=ap.strikes, last_action=d.action, last_reason=d.reason)
@@ -1161,14 +1186,14 @@ class Trainer:
             if self.evaluator is not None and step % quality_every == 0 and step < max_steps:
                 q = self.quality_round(step)
                 self._mark_best("likeness", step, (q or {}).get("likeness"), save_every, max_steps)
-                if ap_on and ap.should_stop(step):
+                if ap_ctl and ap.should_stop(step):
                     stop_reason = "조기 종료: " + ("외우기 시작함" if ap.stop_why else "품질 저하가 반복됨")
                     break
 
         # ---- finish
         self.rl.log(f"학습 종료 ({stop_reason}) at step {step}")
         if ap_on:
-            self.rl.log(ap.stop_report())
+            self.rl.log(ap.stop_report() + (" (Fizgig 방식이라 참고용, 멈추지는 않음)" if drive else ""))
         with self.using_ema():
             last = self.lora_weights()
         self.save_lora(os.path.join(self.run_dir, f"{cfg.name}_last.safetensors"), last, {"ss_steps": step})
@@ -1181,7 +1206,7 @@ class Trainer:
             best_weights, best_step = last, step
         self.save_lora(os.path.join(self.run_dir, f"{cfg.name}.safetensors"), best_weights,
                        {"ss_steps": best_step, "oslora_selected": "best"})
-        self.rl.log(f"저장: {cfg.name}.safetensors (추천: step {best_step}, 마지막 건강한 평가), "
+        self.rl.log(f"저장: {cfg.name}.safetensors (추천: step {best_step}, {'마지막' if drive else '마지막 건강한 평가'}), "
                     f"{cfg.name}_last.safetensors (step {step})")
         if cfg.sample.prompts:
             # final samples from the selected (best) weights

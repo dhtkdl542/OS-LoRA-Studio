@@ -547,7 +547,7 @@ async function startTraining() {
     name: $("#tr-name").value.trim(), folder: S.ds.folder, trigger: $("#tr-trigger").value,
     model: S.model || "moss_image",
     resolution: +segValue("tr-res"), rank: +$("#tr-rank").value, alpha: +$("#tr-alpha").value,
-    max_steps: $("#tr-steps").value.trim(), autopilot: $("#tr-ap").checked,
+    max_steps: $("#tr-steps").value.trim(), autopilot: $("#tr-ap").checked, lr_drive: $("#tr-drive").value,
     min_lr: +$("#tr-minlr").value, max_lr: +$("#tr-maxlr").value, start_lr: +$("#tr-startlr").value,
     early_stop: $("#tr-early").checked,
     holdout: $("#tr-holdout").value, caption_dropout: +$("#tr-cdrop").value, caption_length: $("#tr-clen").value, photo_texture: $("#tr-photo").checked, masked: $("#tr-mask").checked, training_adapter: $("#tr-adapter").checked, int8_compute: false, multires: $("#tr-multires").checked, ema: +$("#tr-ema").value,
@@ -655,7 +655,7 @@ $("#auto-modal").addEventListener("click", e => { if (e.target.id === "auto-moda
 
 // training form survives a page refresh / server restart (per-browser convenience only)
 const TRAIN_FIELDS = ["tr-name", "tr-trigger", "tr-steps", "tr-rank", "tr-alpha", "tr-minlr", "tr-startlr", "tr-maxlr",
-  "tr-holdout", "tr-ema", "tr-cdrop", "tr-clen", "tr-opt", "tr-lr", "tr-samples", "tr-severy", "tr-sw", "tr-sh", "tr-keep"];
+  "tr-holdout", "tr-ema", "tr-cdrop", "tr-clen", "tr-drive", "tr-opt", "tr-lr", "tr-samples", "tr-severy", "tr-sw", "tr-sh", "tr-keep"];
 const TRAIN_CHECKS = ["tr-ap", "tr-early", "tr-photo", "tr-mask", "tr-adapter", "tr-multires", "tr-cleanup"];
 function saveTrainSettings() {
   const s = { preset: S.preset, res: segValue("tr-res"), samplesSig: S.defaults && S.defaults.samples_sig };
